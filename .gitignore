@@ -1,0 +1,14 @@
+bin/
+data/
+logs/
+*.db
+*.log
+*.exe
+sl651-platform
+importer
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
