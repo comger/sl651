@@ -265,8 +265,15 @@ func (p *Protocol) GetFunctionCodeName(code string) string {
 	return "未知"
 }
 
-func (p *Protocol) BuildTLV(tag byte, val float64, decimals int) []byte {
-	valInt := int64(math.Round(val * math.Pow10(decimals)))
+func (p *Protocol) BuildTLV(tag byte, val interface{}, decimals int) []byte {
+	floatVal := 0.0
+	if f, ok := val.(float64); ok {
+		floatVal = f
+	} else if i, ok := val.(int); ok {
+		floatVal = float64(i)
+	}
+
+	valInt := int64(math.Round(floatVal * math.Pow10(decimals)))
 	// Length mapping based on user reference case
 	l := 3
 	switch tag {
@@ -282,6 +289,26 @@ func (p *Protocol) BuildTLV(tag byte, val float64, decimals int) []byte {
 	valBCD := encodeIntToBCD(valInt, l)
 	meta := byte(l<<3 | (decimals & 0x07))
 	return append([]byte{tag, meta}, valBCD...)
+}
+
+func (p *Protocol) BuildTimeTLV(obsTime time.Time) []byte {
+	// 0xF0 - Observation Time (YY MM DD HH mm) -> 5 bytes
+	tag := byte(0xF0)
+	// Manual BCD encoding for time
+	y := obsTime.Year() % 100
+	m := int(obsTime.Month())
+	d := obsTime.Day()
+	h := obsTime.Hour()
+	min := obsTime.Minute()
+
+	bcd := []byte{
+		byte((y/10)<<4 | (y % 10)),
+		byte((m/10)<<4 | (m % 10)),
+		byte((d/10)<<4 | (d % 10)),
+		byte((h/10)<<4 | (h % 10)),
+		byte((min/10)<<4 | (min % 10)),
+	}
+	return append([]byte{tag, 0x28}, bcd...) // 0x28 = len 5, dec 0 (01010 000)
 }
 
 func (p *Protocol) GenerateID() string {

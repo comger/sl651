@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Layout, Table, Checkbox, Card, Typography, Space, Tag, theme, Divider, Empty, ConfigProvider, Statistic, Row, Col, Badge, Button, Modal, Form, InputNumber, Tooltip, Drawer, Timeline } from 'antd';
-import { DatabaseOutlined, HddOutlined, SyncOutlined, SettingOutlined, DashboardOutlined, HistoryOutlined } from '@ant-design/icons';
+import { Layout, Table, Checkbox, Card, Typography, Space, Tag, theme, Divider, Empty, ConfigProvider, Statistic, Row, Col, Badge, Button, Modal, Form, InputNumber, Tooltip, Drawer, Timeline, Menu, Progress } from 'antd';
+import { DatabaseOutlined, HddOutlined, SyncOutlined, SettingOutlined, DashboardOutlined, HistoryOutlined, AlertOutlined, SafetyCertificateOutlined, BugOutlined, ProfileOutlined, SignalFilled } from '@ant-design/icons';
 import axios from 'axios';
 import moment from 'moment';
 
@@ -22,9 +22,13 @@ const App = () => {
   const [stats, setStats] = useState({ total: 0, online: 0, offline: 0 });
   const [hbStatus, setHbStatus] = useState({});
   const [hbConfig, setHbConfig] = useState({ check_interval: 60, default_timeout: 300 });
+  const [faultLogs, setFaultLogs] = useState([]);
+  const [systemLogs, setSystemLogs] = useState([]);
+  const [qualityMetrics, setQualityMetrics] = useState([]);
   const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
   const [isTrendDrawerOpen, setIsTrendDrawerOpen] = useState(false);
   const [trendData, setTrendData] = useState([]);
+  const [activeTab, setActiveTab] = useState('monitoring');
   const [configLoading, setConfigLoading] = useState(false);
   const [form] = Form.useForm();
 
@@ -42,9 +46,16 @@ const App = () => {
       fetchDevices();
       fetchStats();
       fetchHbStatus();
+      if (activeTab === 'diagnosis') {
+        fetchFaultLogs();
+        fetchSystemLogs();
+      }
+      if (activeTab === 'quality') {
+        fetchQualityMetrics();
+      }
     }, 10000);
     return () => clearInterval(interval);
-  }, []);
+  }, [activeTab]);
 
   // Poll data based on selection
   useEffect(() => {
@@ -57,7 +68,7 @@ const App = () => {
     try {
       const res = await api.get('/devices');
       if (res.data.code === 0) {
-        const devList = res.data.data || [];
+        const devList = (res.data.data || []).sort((a, b) => a.id.localeCompare(b.id));
         setDevices(devList);
         // Auto-select all if selection is empty (first load)
         if (selectedStationIDs.length === 0 && devList.length > 0) {
@@ -129,16 +140,51 @@ const App = () => {
     }
   };
 
+  const fetchFaultLogs = async () => {
+    try {
+      const res = await api.get('/diagnosis/faults', { params: { limit: 100 } });
+      if (res.data.code === 0) {
+        setFaultLogs(res.data.data || []);
+      }
+    } catch (error) {
+      console.error('Failed to fetch fault logs:', error);
+    }
+  };
+
+  const fetchSystemLogs = async () => {
+    try {
+      const res = await api.get('/diagnosis/logs', { params: { limit: 100 } });
+      if (res.data.code === 0) {
+        setSystemLogs(res.data.data || []);
+      }
+    } catch (error) {
+      console.error('Failed to fetch system logs:', error);
+    }
+  };
+
+  const fetchQualityMetrics = async () => {
+    try {
+      const res = await api.get('/diagnosis/quality', { params: { limit: 100 } });
+      if (res.data.code === 0) {
+        setQualityMetrics(res.data.data || []);
+      }
+    } catch (error) {
+      console.error('Failed to fetch quality metrics:', error);
+    }
+  };
+
   const openTrendDrawer = async () => {
     await fetchTrendData();
     setIsTrendDrawerOpen(true);
   };
 
   const fetchData = async () => {
+    setLoading(true);
     try {
       if (selectedStationIDs.length === 0) {
         // No need to fetch if empty, but we can set data to empty to be safe
         setData([]);
+        setLoading(false);
         return;
       }
       const params = { limit: limit };
@@ -163,6 +209,8 @@ const App = () => {
       }
     } catch (error) {
       console.error('Failed to fetch data:', error);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -259,9 +307,31 @@ const App = () => {
       }}
     >
       <Layout style={{ minHeight: '100vh' }}>
-        <Header style={{ display: 'flex', alignItems: 'center', background: '#001529', padding: '0 20px' }}>
-          <DatabaseOutlined style={{ color: '#fff', fontSize: '24px', marginRight: '10px' }} />
-          <Title level={3} style={{ color: '#fff', margin: 0 }}>SL651 监测与解析平台</Title>
+        <Header style={{ display: 'flex', alignItems: 'center', background: '#001529', padding: '0 20px', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center' }}>
+            <DatabaseOutlined style={{ color: '#fff', fontSize: '24px', marginRight: '10px' }} />
+            <Title level={4} style={{ color: '#fff', margin: 0, marginRight: '40px' }}>SL651 监测与解析平台</Title>
+            <Menu
+              theme="dark"
+              mode="horizontal"
+              defaultSelectedKeys={['monitoring']}
+              selectedKeys={[activeTab]}
+              onClick={(e) => setActiveTab(e.key)}
+              style={{ minWidth: '300px' }}
+              items={[
+                { key: 'monitoring', icon: <DashboardOutlined />, label: '实时监测' },
+                { key: 'diagnosis', icon: <BugOutlined />, label: '运维审计' },
+                { key: 'quality', icon: <SignalFilled />, label: '质量评估' },
+              ]}
+            />
+          </div>
+          <Space>
+            <Tooltip title="当前系统健康状况">
+              <Badge count={faultLogs.filter(f => f.severity === 'error' || f.severity === 'critical').length} offset={[10, 0]}>
+                <SafetyCertificateOutlined style={{ color: '#52c41a', fontSize: '20px' }} />
+              </Badge>
+            </Tooltip>
+          </Space>
         </Header>
         <Layout hasSider>
           <Sider width={280} style={{ background: colorBgContainer, padding: '20px', borderRight: '1px solid #f0f0f0', overflowY: 'auto' }}>
@@ -295,6 +365,9 @@ const App = () => {
                           <Space direction="vertical" size={0}>
                             <Text strong>{dev.name || '未命名设备'}</Text>
                             <Text type="secondary" style={{ fontSize: '11px' }}>ID: {dev.id}</Text>
+                            <Text type="secondary" style={{ fontSize: '10px' }}>
+                              连接: {status && status.last_seen ? moment(status.last_seen).format('MM-DD HH:mm:ss') : '-'}
+                            </Text>
                           </Space>
                           <Badge
                             status={isOnline ? 'processing' : 'default'}
@@ -311,101 +384,172 @@ const App = () => {
             )}
           </Sider>
           <Content style={{ padding: '24px', overflowY: 'auto', background: '#f0f2f5', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <Row gutter={16}>
-              <Col span={8}>
-                <Card bordered={false} style={{ borderRadius: borderRadiusLG }}>
-                  <Statistic
-                    title="总设备数"
-                    value={stats.total}
-                    prefix={<HddOutlined />}
-                    valueStyle={{ color: '#001529' }}
-                  />
-                </Card>
-              </Col>
-              <Col span={8}>
-                <Card bordered={false} style={{ borderRadius: borderRadiusLG }}>
-                  <Statistic
-                    title="当前在线"
-                    value={stats.online}
-                    prefix={<SyncOutlined spin={stats.online > 0} />}
-                    valueStyle={{ color: '#52c41a' }}
-                  />
-                </Card>
-              </Col>
-              <Col span={8}>
-                <Card bordered={false} style={{ borderRadius: borderRadiusLG }}>
-                  <Statistic
-                    title="离线警告"
-                    value={stats.offline}
-                    prefix={<HistoryOutlined />}
-                    valueStyle={{ color: stats.offline > 0 ? '#ff4d4f' : '#8c8c8c' }}
-                  />
-                </Card>
-              </Col>
-            </Row>
+            {activeTab === 'monitoring' && (
+              <>
+                <Row gutter={16}>
+                  <Col span={8}>
+                    <Card bordered={false} style={{ borderRadius: borderRadiusLG }}>
+                      <Statistic
+                        title="总设备数"
+                        value={stats.total}
+                        prefix={<HddOutlined />}
+                        valueStyle={{ color: '#001529' }}
+                      />
+                    </Card>
+                  </Col>
+                  <Col span={8}>
+                    <Card bordered={false} style={{ borderRadius: borderRadiusLG }}>
+                      <Statistic
+                        title="当前在线"
+                        value={stats.online}
+                        prefix={<SyncOutlined spin={stats.online > 0} />}
+                        valueStyle={{ color: '#52c41a' }}
+                      />
+                    </Card>
+                  </Col>
+                  <Col span={8}>
+                    <Card bordered={false} style={{ borderRadius: borderRadiusLG }}>
+                      <Statistic
+                        title="离线警告"
+                        value={stats.offline}
+                        prefix={<HistoryOutlined />}
+                        valueStyle={{ color: stats.offline > 0 ? '#ff4d4f' : '#8c8c8c' }}
+                      />
+                    </Card>
+                  </Col>
+                </Row>
 
-            <Card
-              bordered={false}
-              style={{ borderRadius: borderRadiusLG, boxShadow: '0 1px 2px 0 rgba(0,0,0,0.03)', flex: 1, display: 'flex', flexDirection: 'column' }}
-              bodyStyle={{ padding: '0', flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
-            >
-              <div style={{ padding: '16px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Space>
-                  <SyncOutlined spin={loading} />
-                  <Title level={5} style={{ margin: 0 }}>实时报文</Title>
-                  {selectedStationIDs.length > 0 ? <Tag color="processing">已选: {selectedStationIDs.length}</Tag> : <Tag>全部</Tag>}
-                </Space>
-                <Space size="large">
-                  <Space>
-                    <Text secondary style={{ fontSize: '12px' }}>条数:</Text>
-                    <input
-                      type="range"
-                      min="10"
-                      max="100"
-                      value={limit}
-                      onChange={(e) => setLimit(parseInt(e.target.value))}
-                      style={{ width: '80px' }}
-                    />
-                    <Tag style={{ margin: 0 }}>{limit}</Tag>
-                  </Space>
-                  <Space>
-                    <Text secondary style={{ fontSize: '12px' }}>频率:</Text>
-                    <select
-                      value={refreshInterval}
-                      onChange={(e) => setRefreshInterval(parseInt(e.target.value))}
-                      style={{ padding: '2px 4px', borderRadius: '4px', border: '1px solid #d9d9d9', fontSize: '12px' }}
-                    >
-                      <option value={5}>5s</option>
-                      <option value={10}>10s</option>
-                      <option value={30}>30s</option>
-                    </select>
-                  </Space>
-                  <Tooltip title="查看运行轨迹">
-                    <Button
-                      type="text"
-                      icon={<HistoryOutlined />}
-                      onClick={openTrendDrawer}
-                    />
-                  </Tooltip>
-                  <Tooltip title="心跳管理配置">
-                    <Button
-                      type="text"
-                      icon={<SettingOutlined />}
-                      onClick={() => setIsConfigModalOpen(true)}
-                    />
-                  </Tooltip>
-                </Space>
+                <Card
+                  bordered={false}
+                  style={{ borderRadius: borderRadiusLG, boxShadow: '0 1px 2px 0 rgba(0,0,0,0.03)', flex: 1, display: 'flex', flexDirection: 'column' }}
+                  bodyStyle={{ padding: '0', flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
+                >
+                  <div style={{ padding: '16px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Space>
+                      <SyncOutlined spin={loading} />
+                      <Title level={5} style={{ margin: 0 }}>实时报文</Title>
+                      {selectedStationIDs.length > 0 ? <Tag color="processing">已选: {selectedStationIDs.length}</Tag> : <Tag>全部</Tag>}
+                    </Space>
+                    <Space size="large">
+                      <Space>
+                        <Text secondary style={{ fontSize: '12px' }}>条数:</Text>
+                        <input
+                          type="range"
+                          min="10"
+                          max="100"
+                          value={limit}
+                          onChange={(e) => setLimit(parseInt(e.target.value))}
+                          style={{ width: '80px' }}
+                        />
+                        <Tag style={{ margin: 0 }}>{limit}</Tag>
+                      </Space>
+                      <Space>
+                        <Text secondary style={{ fontSize: '12px' }}>频率:</Text>
+                        <select
+                          value={refreshInterval}
+                          onChange={(e) => setRefreshInterval(parseInt(e.target.value))}
+                          style={{ padding: '2px 4px', borderRadius: '4px', border: '1px solid #d9d9d9', fontSize: '12px' }}
+                        >
+                          <option value={5}>5s</option>
+                          <option value={10}>10s</option>
+                          <option value={30}>30s</option>
+                        </select>
+                      </Space>
+                      <Tooltip title="查看运行轨迹">
+                        <Button
+                          type="text"
+                          icon={<HistoryOutlined />}
+                          onClick={openTrendDrawer}
+                        />
+                      </Tooltip>
+                      <Tooltip title="心跳管理配置">
+                        <Button
+                          type="text"
+                          icon={<SettingOutlined />}
+                          onClick={() => setIsConfigModalOpen(true)}
+                        />
+                      </Tooltip>
+                    </Space>
+                  </div>
+                  <Table
+                    columns={columns}
+                    dataSource={data}
+                    rowKey="id"
+                    pagination={false}
+                    size="middle"
+                    style={{ flex: 1 }}
+                    scroll={{ y: 'calc(100vh - 360px)' }}
+                  />
+                </Card>
+              </>
+            )}
+            {activeTab === 'diagnosis' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                <Row gutter={16}>
+                  <Col span={12}>
+                    <Card title={<span><AlertOutlined style={{ color: '#ff4d4f' }} /> 设备故障日志</span>} bordered={false} style={{ borderRadius: borderRadiusLG }}>
+                      <Table
+                        dataSource={faultLogs}
+                        rowKey="id"
+                        size="small"
+                        pagination={{ pageSize: 10 }}
+                        columns={[
+                          { title: '故障代码', dataIndex: 'fault_code', width: 110, render: code => <Text code>{code || '-'}</Text> },
+                          { title: '时间', dataIndex: 'time', width: 140, render: t => moment(t).format('MM-DD HH:mm:ss') },
+                          { title: '设备ID', dataIndex: 'device_id', width: 100 },
+                          {
+                            title: '级别', dataIndex: 'severity', width: 80, render: s => (
+                              <Tag color={s === 'critical' ? 'volcano' : s === 'error' ? 'red' : 'orange'}>{s?.toUpperCase()}</Tag>
+                            )
+                          },
+                          { title: '故障描述', dataIndex: 'message' },
+                        ]}
+                      />
+                    </Card>
+                  </Col>
+                  <Col span={12}>
+                    <Card title={<span><ProfileOutlined /> 系统运行日志</span>} bordered={false} style={{ borderRadius: borderRadiusLG }}>
+                      <Table
+                        dataSource={systemLogs}
+                        rowKey="id"
+                        size="small"
+                        pagination={{ pageSize: 10 }}
+                        columns={[
+                          { title: '时间', dataIndex: 'time', width: 140, render: t => moment(t).format('MM-DD HH:mm:ss') },
+                          { title: '模块', dataIndex: 'source', width: 100 },
+                          { title: '级别', dataIndex: 'level', width: 80, render: l => <Tag>{l}</Tag> },
+                          { title: '内容', dataIndex: 'message' },
+                        ]}
+                      />
+                    </Card>
+                  </Col>
+                </Row>
               </div>
-              <Table
-                columns={columns}
-                dataSource={data}
-                rowKey="id"
-                pagination={false}
-                size="middle"
-                style={{ flex: 1 }}
-                scroll={{ y: 'calc(100vh - 360px)' }}
-              />
-            </Card>
+            )}
+            {activeTab === 'quality' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                <Row gutter={16}>
+                  <Col span={24}>
+                    <Card title={<span><SignalFilled style={{ color: '#1890ff' }} /> 全局报文质量概览</span>} bordered={false} style={{ borderRadius: borderRadiusLG }}>
+                      <Table
+                        dataSource={qualityMetrics}
+                        rowKey="id"
+                        pagination={{ pageSize: 15 }}
+                        columns={[
+                          { title: '评估时间', dataIndex: 'time', width: 170, render: t => moment(t).format('YYYY-MM-DD HH:mm:ss') },
+                          { title: '设备ID', dataIndex: 'device_id', width: 120 },
+                          { title: '综合评分', dataIndex: 'score', width: 150, render: s => <Progress percent={Math.round(s)} size="small" status={s < 60 ? 'exception' : s < 85 ? 'normal' : 'success'} /> },
+                          { title: '完整度', dataIndex: 'completeness', width: 100, render: c => <Tag color={c > 99 ? 'green' : 'orange'}>{c.toFixed(1)}%</Tag> },
+                          { title: '网络延时', dataIndex: 'latency', width: 100, render: l => <Tag color={l < 3 ? 'green' : 'red'}>{l.toFixed(2)}s</Tag> },
+                          { title: '通信误码率', dataIndex: 'error_rate', width: 100, render: e => <Tag color={e < 1 ? 'blue' : 'volcano'}>{e.toFixed(2)}%</Tag> },
+                          { title: '网动抖动', dataIndex: 'jitter', width: 100, render: j => <Text type={j > 1 ? 'danger' : 'secondary'}>{j.toFixed(3)}s</Text> },
+                        ]}
+                      />
+                    </Card>
+                  </Col>
+                </Row>
+              </div>
+            )}
 
             <Modal
               title={<span><SettingOutlined /> 心跳监测全球配置</span>}
@@ -449,7 +593,7 @@ const App = () => {
             >
               {trendData.length > 0 ? (
                 <Timeline
-                  items={trendData.map((item, index) => ({
+                  items={trendData.map((item) => ({
                     color: item.status === 'online' ? 'green' : 'gray',
                     children: (
                       <div>

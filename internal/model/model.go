@@ -377,14 +377,15 @@ const (
 )
 
 type FaultLog struct {
-	ID       uint      `json:"id" gorm:"primaryKey"`
-	DeviceID string    `json:"device_id" gorm:"index"`
-	Type     FaultType `json:"type" gorm:"not null"`
-	Severity Severity  `json:"severity" gorm:"not null"`
-	Message  string    `json:"message" gorm:"not null"`
-	Details  string    `json:"details"`
-	Time     time.Time `json:"time" gorm:"index"`
-	Resolved bool      `json:"resolved" gorm:"default:false"`
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	DeviceID  string    `json:"device_id" gorm:"index"`
+	FaultCode string    `json:"fault_code" gorm:"index"` // Format: F-A-BB-CC
+	Type      FaultType `json:"type" gorm:"not null"`
+	Severity  Severity  `json:"severity" gorm:"not null"`
+	Message   string    `json:"message" gorm:"not null"`
+	Details   string    `json:"details"`
+	Time      time.Time `json:"time" gorm:"index"`
+	Resolved  bool      `json:"resolved" gorm:"default:false"`
 }
 
 type SystemLog struct {
@@ -393,4 +394,15 @@ type SystemLog struct {
 	Source  string    `json:"source" gorm:"index"`
 	Message string    `json:"message"`
 	Time    time.Time `json:"time" gorm:"index"`
+}
+
+type QualityMetric struct {
+	ID           uint      `json:"id" gorm:"primaryKey"`
+	DeviceID     string    `json:"device_id" gorm:"index"`
+	Completeness float64   `json:"completeness"` // 0-100%
+	Latency      float64   `json:"latency"`      // Seconds
+	ErrorRate    float64   `json:"error_rate"`   // 0-100%
+	Jitter       float64   `json:"jitter"`       // Latency variation
+	Score        float64   `json:"score"`        // Comprehensive score 0-100
+	Time         time.Time `json:"time" gorm:"index"`
 }

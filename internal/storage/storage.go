@@ -342,3 +342,58 @@ func (s *Storage) GetSystemLogs(ctx context.Context, limit int) ([]*model.System
 	err := query.Find(&logs).Error
 	return logs, err
 }
+
+func (s *Storage) SaveQualityMetric(ctx context.Context, metric *model.QualityMetric) error {
+	return s.db.WithContext(ctx).Create(metric).Error
+}
+
+func (s *Storage) GetLatestQualityMetrics(ctx context.Context, deviceID string, limit int) ([]*model.QualityMetric, error) {
+	var metrics []*model.QualityMetric
+	query := s.db.WithContext(ctx).Order("time DESC")
+	if deviceID != "" {
+		query = query.Where("device_id = ?", deviceID)
+	}
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	err := query.Find(&metrics).Error
+	return metrics, err
+}
+
+func (s *Storage) GetQualityStats(ctx context.Context, deviceID string, start, end time.Time) (map[string]interface{}, error) {
+	var result struct {
+		AvgCompleteness float64 `gorm:"column:avg_completeness"`
+		AvgLatency      float64 `gorm:"column:avg_latency"`
+		AvgErrorRate    float64 `gorm:"column:avg_error_rate"`
+		AvgJitter       float64 `gorm:"column:avg_jitter"`
+		AvgScore        float64 `gorm:"column:avg_score"`
+		Count           int64   `gorm:"column:count"`
+	}
+
+	query := s.db.WithContext(ctx).Model(&model.QualityMetric{}).
+		Select("AVG(completeness) as avg_completeness, AVG(latency) as avg_latency, AVG(error_rate) as avg_error_rate, AVG(jitter) as avg_jitter, AVG(score) as avg_score, COUNT(*) as count")
+
+	if deviceID != "" {
+		query = query.Where("device_id = ?", deviceID)
+	}
+	if !start.IsZero() {
+		query = query.Where("time >= ?", start)
+	}
+	if !end.IsZero() {
+		query = query.Where("time <= ?", end)
+	}
+
+	err := query.Scan(&result).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"avg_completeness": result.AvgCompleteness,
+		"avg_latency":      result.AvgLatency,
+		"avg_error_rate":   result.AvgErrorRate,
+		"avg_jitter":       result.AvgJitter,
+		"avg_score":        result.AvgScore,
+		"count":            result.Count,
+	}, nil
+}

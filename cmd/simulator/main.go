@@ -26,6 +26,7 @@ type Device struct {
 	mu       sync.Mutex
 	Protocol *sl651.Protocol
 	Step     int
+	Mode     string // "normal", "solar_fail", "network_retry"
 }
 
 type Simulator struct {
@@ -45,7 +46,7 @@ func NewSimulator(serverAddr string) *Simulator {
 	}
 }
 
-func (s *Simulator) AddDevice(id, name string, interval time.Duration) *Device {
+func (s *Simulator) AddDevice(id, name string, interval time.Duration, mode string) *Device {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -56,6 +57,7 @@ func (s *Simulator) AddDevice(id, name string, interval time.Duration) *Device {
 		StopChan: make(chan struct{}),
 		Protocol: sl651.NewProtocol(),
 		Step:     0,
+		Mode:     mode,
 	}
 	s.devices = append(s.devices, device)
 	return device
@@ -93,7 +95,7 @@ func (s *Simulator) runDevice(device *Device) {
 	device.Running = true
 	device.mu.Unlock()
 
-	log.Printf("[日志] Device %s (%s) started", device.ID, device.Name)
+	log.Printf("[日志] Device %s (%s) started in [%s] mode", device.ID, device.Name, device.Mode)
 
 	ticker := time.NewTicker(device.Interval)
 	defer ticker.Stop()
@@ -107,6 +109,19 @@ func (s *Simulator) runDevice(device *Device) {
 			log.Printf("[日志] Device %s stopped by context", device.ID)
 			return
 		case <-ticker.C:
+			// Network Retry Logic: 1 in 5 chance to skip sending (simulating offline)
+			if device.Mode == "network_retry" && rand.Intn(5) == 0 {
+				log.Printf("[警告] Device %s (网络波动站) simulating connection interruption...", device.ID)
+				time.Sleep(device.Interval * 2) // Wait longer
+				log.Printf("[日志] Device %s (网络波动站) reconnecting and re-sending historical data...", device.ID)
+
+				// Re-send with historical timestamp
+				historicalTime := time.Now().Add(-1 * time.Hour)
+				if err := s.sendDeviceDataWithTime(device, historicalTime); err != nil {
+					log.Printf("[错误] Reissue failed: %v", err)
+				}
+			}
+
 			if err := s.sendDeviceData(device); err != nil {
 				log.Printf("[日志] Device %s failed to send data: %v", device.ID, err)
 			}
@@ -115,6 +130,10 @@ func (s *Simulator) runDevice(device *Device) {
 }
 
 func (s *Simulator) sendDeviceData(device *Device) error {
+	return s.sendDeviceDataWithTime(device, time.Now())
+}
+
+func (s *Simulator) sendDeviceDataWithTime(device *Device, obsTime time.Time) error {
 	conn, err := net.DialTimeout("tcp", s.serverAddr, 5*time.Second)
 	if err != nil {
 		return fmt.Errorf("failed to connect: %w", err)
@@ -130,16 +149,32 @@ func (s *Simulator) sendDeviceData(device *Device) error {
 
 	// Complex Telemetry Reports (31, 32, 34)
 	if fCode != 0x2F {
-		// Aligned with reference meta and decimals
-		body = append(body, device.Protocol.BuildTLV(0x22, 12.2, 1)...) // Rainfall: meta 19 (3 byte), dec 1
-		body = append(body, device.Protocol.BuildTLV(0x27, 0.0, 3)...)  // Day Rainfall: meta 2b (5 byte), dec 3
-		body = append(body, device.Protocol.BuildTLV(0x39, 25.2, 3)...) // Water Level: meta 23 (4 byte), dec 3
-		body = append(body, device.Protocol.BuildTLV(0x37, 0.0, 3)...)  // Instant Flow: meta 1b (3 byte), dec 3
-		body = append(body, device.Protocol.BuildTLV(0x30, 43.0, 3)...) // Cumulative Flow: meta 2b (5 byte), dec 3
-		body = append(body, device.Protocol.BuildTLV(0x20, 0.0, 1)...)  // Total Rainfall: meta 19 (3 byte), dec 1
-		body = append(body, device.Protocol.BuildTLV(0x1F, 0.0, 1)...)  // Period Rainfall: meta 19 (3 byte), dec 1
-		body = append(body, device.Protocol.BuildTLV(0x26, 0.0, 1)...)  // Hourly Rainfall: meta 19 (3 byte), dec 1
-		body = append(body, device.Protocol.BuildTLV(0x38, 12.5, 2)...) // Voltage: meta 12 (2 byte), dec 2
+		voltage := 12.5 + (rand.Float64() * 1.5)
+		if device.Mode == "solar_fail" {
+			voltage = 10.5 // Constant low voltage
+		} else if device.Mode == "normal" {
+			voltage = 13.2 // Very steady
+		}
+
+		waterLevel := 10.0 + (rand.Float64() * 20.0)
+		if device.Mode == "normal" {
+			waterLevel = 15.6
+		}
+
+		rainfall := rand.Float64() * 5.0
+
+		// Add Observation Time for re-sending simulation
+		body = append(body, device.Protocol.BuildTimeTLV(obsTime)...)
+
+		body = append(body, device.Protocol.BuildTLV(0x22, rainfall, 1)...)
+		body = append(body, device.Protocol.BuildTLV(0x27, 0.0, 3)...)
+		body = append(body, device.Protocol.BuildTLV(0x39, waterLevel, 3)...)
+		body = append(body, device.Protocol.BuildTLV(0x37, 0.0, 3)...)
+		body = append(body, device.Protocol.BuildTLV(0x30, 43.0, 3)...)
+		body = append(body, device.Protocol.BuildTLV(0x20, 0.0, 1)...)
+		body = append(body, device.Protocol.BuildTLV(0x1F, 0.0, 1)...)
+		body = append(body, device.Protocol.BuildTLV(0x26, 0.0, 1)...)
+		body = append(body, device.Protocol.BuildTLV(0x38, voltage, 2)...)
 	}
 
 	data, err := device.Protocol.BuildMessage(device.ID, fCode, body)
@@ -155,59 +190,22 @@ func (s *Simulator) sendDeviceData(device *Device) error {
 	if parsed != nil {
 		jsonMap, _ := device.Protocol.ConvertToStandardData(parsed)
 		jsonBytes, _ := json.Marshal(jsonMap)
-		log.Printf("[日志] Device %s sending %s (%02X) JSON: %s", device.ID, fCodeName, fCode, string(jsonBytes))
-	} else {
-		log.Printf("[日志] Device %s sending %s (%02X) HEX: %s", device.ID, fCodeName, fCode, hexData)
+		log.Printf("[日志] Device %s sending %s (%02X) [%s] JSON: %s", device.ID, fCodeName, fCode, device.Mode, string(jsonBytes))
 	}
 
 	_, err = conn.Write(data)
-	if err != nil {
-		return fmt.Errorf("failed to write: %w", err)
-	}
-
-	if fCode == 0x2F {
-		log.Printf("[日志] Device %s (2F): Mode M1, skipping response check.", device.ID)
-		return nil
-	}
-
-	response := make([]byte, 1024)
-	err = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-	if err != nil {
-		return err
-	}
-
-	n, err := conn.Read(response)
-	if err != nil {
-		log.Printf("[日志] Device %s wait response timeout/error: %v", device.ID, err)
-	} else {
-		respHex := hex.EncodeToString(response[:n])
-		parsedResp, _ := device.Protocol.Parse(respHex)
-		if parsedResp != nil {
-			jsonMap, _ := device.Protocol.ConvertToStandardData(parsedResp)
-			jsonBytes, _ := json.Marshal(jsonMap)
-			log.Printf("[日志] Device %s received response JSON: %s", device.ID, string(jsonBytes))
-		} else {
-			log.Printf("[日志] Device %s received response HEX: %x", device.ID, response[:n])
-		}
-	}
-
-	return nil
+	return err
 }
 
 func main() {
 	rand.Seed(time.Now().UnixNano())
-
-	serverAddr := "120.79.72.98:9100"
-	serverAddr = "127.0.0.1:8080"
-
-	if len(os.Args) > 1 {
-		serverAddr = os.Args[1]
-	}
+	serverAddr := "127.0.0.1:8080"
 
 	simulator := NewSimulator(serverAddr)
-	simulator.AddDevice("1090330854", "演示站点2", 5*time.Second)
-	simulator.AddDevice("1090330855", "演示站点2", 5*time.Second)
-	simulator.AddDevice("1090330856", "演示站点2", 5*time.Second)
+	simulator.AddDevice("1090330853", "演示-完全正常", 10*time.Second, "normal")
+	simulator.AddDevice("1090330854", "演示-供电异常", 10*time.Second, "solar_fail")
+	simulator.AddDevice("1090330855", "演示-补发测试", 10*time.Second, "network_retry")
+	simulator.AddDevice("1090330856", "常规站点", 15*time.Second, "normal")
 
 	simulator.Start()
 

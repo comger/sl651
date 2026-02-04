@@ -12,29 +12,36 @@ import (
 	"sl651-platform/internal/config"
 	"sl651-platform/internal/database"
 	"sl651-platform/internal/device"
+	"sl651-platform/internal/diagnosis"
 	"sl651-platform/internal/forward"
 	"sl651-platform/internal/heartbeat"
 	"sl651-platform/internal/http"
+	"sl651-platform/internal/model"
 	"sl651-platform/internal/notifier"
+	"sl651-platform/internal/quality"
 	"sl651-platform/internal/sl651"
 	"sl651-platform/internal/storage"
 	"syscall"
 )
 
 type TCPServer struct {
-	addr           string
-	listener       net.Listener
-	protocol       *sl651.Protocol
-	deviceManager  *device.Manager
-	forwardService *forward.Service
+	addr             string
+	listener         net.Listener
+	protocol         *sl651.Protocol
+	deviceManager    *device.Manager
+	forwardService   *forward.Service
+	diagnosisManager *diagnosis.Manager
+	qualityManager   *quality.Manager
 }
 
-func NewTCPServer(addr string, protocol *sl651.Protocol, deviceManager *device.Manager, forwardService *forward.Service) *TCPServer {
+func NewTCPServer(addr string, protocol *sl651.Protocol, deviceManager *device.Manager, forwardService *forward.Service, diagnosisManager *diagnosis.Manager, qualityManager *quality.Manager) *TCPServer {
 	return &TCPServer{
-		addr:           addr,
-		protocol:       protocol,
-		deviceManager:  deviceManager,
-		forwardService: forwardService,
+		addr:             addr,
+		protocol:         protocol,
+		deviceManager:    deviceManager,
+		forwardService:   forwardService,
+		diagnosisManager: diagnosisManager,
+		qualityManager:   qualityManager,
 	}
 }
 
@@ -87,20 +94,31 @@ func (s *TCPServer) handleConnection(ctx context.Context, conn net.Conn) {
 	msg, err := s.protocol.Parse(hexData)
 	if err != nil {
 		log.Printf("Protocol Parse Error: %v", err)
+		s.diagnosisManager.HandleCommError(ctx, "unknown", model.FaultTypeComm, model.SeverityError, "Protocol Parse Error", err.Error()+" | data: "+hexData)
+		s.qualityManager.Evaluate(ctx, "unknown", hexData, nil, err)
 		return
 	}
 
 	data, err := s.protocol.ConvertToStandardData(msg)
 	if err != nil {
 		log.Printf("Data Conversion Error: %v", err)
+		s.diagnosisManager.HandleCommError(ctx, msg.StationID, model.FaultTypeData, model.SeverityError, "Data Conversion Error", err.Error())
+		s.qualityManager.Evaluate(ctx, msg.StationID, hexData, nil, err)
 		return
 	}
+
+	// Trigger Quality Evaluation
+	s.qualityManager.Evaluate(ctx, msg.StationID, hexData, data, nil)
+
+	// Trigger Diagnosis Analysis
+	s.diagnosisManager.AnalyzeData(ctx, msg.StationID, data)
 
 	jsonData, _ := json.Marshal(data)
 	log.Printf("Parsed Data: %s", jsonData)
 
 	if err := s.deviceManager.ProcessMessage(ctx, msg); err != nil {
 		log.Printf("Device Manager Process Error: %v", err)
+		s.diagnosisManager.HandleCommError(ctx, msg.StationID, model.FaultTypeData, model.SeverityWarning, "Device Process Error", err.Error())
 	}
 
 	// Send Success Response (Function Code - 0x32 for timed report etc)
@@ -135,12 +153,17 @@ func main() {
 
 	storage := storage.NewStorage(db)
 	protocol := sl651.NewProtocol()
+	diagnosisManager := diagnosis.NewManager(storage)
+	qualityManager := quality.NewManager(storage)
 	deviceManager := device.NewManager(storage, protocol)
 	forwardService := forward.NewService(storage)
 	notifierService := notifier.NewNotifier()
 	heartbeatManager := heartbeat.NewHeartbeatManager(cfg.Heartbeat, deviceManager, notifierService)
 
-	tcpServer := NewTCPServer(":8080", protocol, deviceManager, forwardService)
+	go diagnosisManager.LogSystemEvent(ctx, "INFO", "System", "Platform starting...")
+	go diagnosisManager.LogSystemEvent(ctx, "INFO", "Database", "Database initialized and migrated")
+
+	tcpServer := NewTCPServer(":8080", protocol, deviceManager, forwardService, diagnosisManager, qualityManager)
 	go func() {
 		if err := tcpServer.Start(ctx); err != nil {
 			log.Printf("TCP server error: %v", err)
@@ -157,7 +180,7 @@ func main() {
 		}
 	}()
 
-	httpServer := http.NewServer(cfg, deviceManager, forwardService, heartbeatManager)
+	httpServer := http.NewServer(cfg, deviceManager, forwardService, heartbeatManager, diagnosisManager, qualityManager)
 	go httpServer.Start()
 
 	sigChan := make(chan os.Signal, 1)

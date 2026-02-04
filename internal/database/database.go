@@ -25,5 +25,6 @@ func AutoMigrate(db *gorm.DB) error {
 		&model.StatusHistory{},
 		&model.FaultLog{},
 		&model.SystemLog{},
+		&model.QualityMetric{},
 	)
 }

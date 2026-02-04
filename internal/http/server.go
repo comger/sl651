@@ -11,9 +11,11 @@ import (
 
 	"sl651-platform/internal/config"
 	"sl651-platform/internal/device"
+	"sl651-platform/internal/diagnosis"
 	"sl651-platform/internal/forward"
 	"sl651-platform/internal/heartbeat"
 	"sl651-platform/internal/model"
+	"sl651-platform/internal/quality"
 
 	_ "sl651-platform/docs" // Import swagger docs
 
@@ -31,6 +33,8 @@ type Server struct {
 	deviceManager    *device.Manager
 	forwardService   *forward.Service
 	heartbeatManager *heartbeat.HeartbeatManager
+	diagnosisManager *diagnosis.Manager
+	qualityManager   *quality.Manager
 	router           *gin.Engine
 	server           *http.Server
 }
@@ -82,7 +86,7 @@ func RequestLogger() gin.HandlerFunc {
 	}
 }
 
-func NewServer(cfg *config.Config, deviceManager *device.Manager, forwardService *forward.Service, heartbeatManager *heartbeat.HeartbeatManager) *Server {
+func NewServer(cfg *config.Config, deviceManager *device.Manager, forwardService *forward.Service, heartbeatManager *heartbeat.HeartbeatManager, diagnosisManager *diagnosis.Manager, qualityManager *quality.Manager) *Server {
 	// Force Debug Mode for now to see verbose output
 	gin.SetMode(gin.DebugMode)
 
@@ -97,6 +101,8 @@ func NewServer(cfg *config.Config, deviceManager *device.Manager, forwardService
 		deviceManager:    deviceManager,
 		forwardService:   forwardService,
 		heartbeatManager: heartbeatManager,
+		diagnosisManager: diagnosisManager,
+		qualityManager:   qualityManager,
 		router:           router,
 		server: &http.Server{
 			Handler:      router,
@@ -149,6 +155,13 @@ func (s *Server) setupRoutes() {
 			heartbeat.GET("/status", s.getHeartbeatStatus)
 			heartbeat.GET("/config", s.getHeartbeatConfig)
 			heartbeat.PUT("/config", s.updateHeartbeatConfig)
+		}
+
+		diagnosis := api.Group("/diagnosis")
+		{
+			diagnosis.GET("/faults", s.getFaultLogs)
+			diagnosis.GET("/logs", s.getSystemLogs)
+			diagnosis.GET("/quality", s.getQualityMetrics)
 		}
 
 		health := api.Group("/health")
@@ -590,6 +603,56 @@ func (s *Server) healthCheck(c *gin.Context) {
 	})
 }
 
+// @Summary Get fault logs
+// @Description Get list of detected faults
+// @Tags diagnosis
+// @Produce json
+// @Param device_id query string false "Device ID"
+// @Param limit query int false "Limit"
+// @Success 200 {object} map[string]interface{}
+// @Router /diagnosis/faults [get]
+func (s *Server) getFaultLogs(c *gin.Context) {
+	deviceID := c.Query("device_id")
+	limitStr := c.DefaultQuery("limit", "50")
+	limit := 50
+	fmt.Sscanf(limitStr, "%d", &limit)
+
+	logs, err := s.diagnosisManager.GetFaultLogs(c.Request.Context(), deviceID, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 0,
+		"data": logs,
+	})
+}
+
+// @Summary Get system logs
+// @Description Get list of system events
+// @Tags diagnosis
+// @Produce json
+// @Param limit query int false "Limit"
+// @Success 200 {object} map[string]interface{}
+// @Router /diagnosis/logs [get]
+func (s *Server) getSystemLogs(c *gin.Context) {
+	limitStr := c.DefaultQuery("limit", "50")
+	limit := 50
+	fmt.Sscanf(limitStr, "%d", &limit)
+
+	logs, err := s.diagnosisManager.GetSystemLogs(c.Request.Context(), limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 0,
+		"data": logs,
+	})
+}
+
 // @Summary Get heartbeat status
 // @Description Get summary of device heartbeat status
 // @Tags heartbeat
@@ -691,5 +754,31 @@ func (s *Server) getTrendStatistics(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"code": 0,
 		"data": stats,
+	})
+}
+
+// @Summary Get quality metrics
+// @Description Get message quality assessment
+// @Tags diagnosis
+// @Produce json
+// @Param device_id query string false "Device ID"
+// @Param limit query int false "Limit"
+// @Success 200 {object} map[string]interface{}
+// @Router /diagnosis/quality [get]
+func (s *Server) getQualityMetrics(c *gin.Context) {
+	deviceID := c.Query("device_id")
+	limitStr := c.DefaultQuery("limit", "50")
+	limit := 50
+	fmt.Sscanf(limitStr, "%d", &limit)
+
+	metrics, err := s.qualityManager.GetLatestMetrics(c.Request.Context(), deviceID, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 0,
+		"data": metrics,
 	})
 }
