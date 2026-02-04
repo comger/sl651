@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"sl651-platform/internal/config"
+	"sl651-platform/internal/control"
 	"sl651-platform/internal/device"
 	"sl651-platform/internal/diagnosis"
 	"sl651-platform/internal/forward"
@@ -35,6 +36,7 @@ type Server struct {
 	heartbeatManager *heartbeat.HeartbeatManager
 	diagnosisManager *diagnosis.Manager
 	qualityManager   *quality.Manager
+	controlManager   *control.Manager
 	router           *gin.Engine
 	server           *http.Server
 }
@@ -86,7 +88,7 @@ func RequestLogger() gin.HandlerFunc {
 	}
 }
 
-func NewServer(cfg *config.Config, deviceManager *device.Manager, forwardService *forward.Service, heartbeatManager *heartbeat.HeartbeatManager, diagnosisManager *diagnosis.Manager, qualityManager *quality.Manager) *Server {
+func NewServer(cfg *config.Config, deviceManager *device.Manager, forwardService *forward.Service, heartbeatManager *heartbeat.HeartbeatManager, diagnosisManager *diagnosis.Manager, qualityManager *quality.Manager, controlManager *control.Manager) *Server {
 	// Force Debug Mode for now to see verbose output
 	gin.SetMode(gin.DebugMode)
 
@@ -103,6 +105,7 @@ func NewServer(cfg *config.Config, deviceManager *device.Manager, forwardService
 		heartbeatManager: heartbeatManager,
 		diagnosisManager: diagnosisManager,
 		qualityManager:   qualityManager,
+		controlManager:   controlManager,
 		router:           router,
 		server: &http.Server{
 			Handler:      router,
@@ -118,11 +121,6 @@ func NewServer(cfg *config.Config, deviceManager *device.Manager, forwardService
 }
 
 func (s *Server) setupRoutes() {
-	// Root route for connectivity check
-	s.router.GET("/", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"message": "SL651 Platform API Online"})
-	})
-
 	// Swagger route
 	s.router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
@@ -162,6 +160,10 @@ func (s *Server) setupRoutes() {
 			diagnosis.GET("/faults", s.getFaultLogs)
 			diagnosis.GET("/logs", s.getSystemLogs)
 			diagnosis.GET("/quality", s.getQualityMetrics)
+			diagnosis.GET("/quality/stats", s.getQualityStats)
+			diagnosis.GET("/quality/devices", s.getQualityDeviceStats)
+			diagnosis.POST("/control/command", s.sendControlCommand)
+			diagnosis.GET("/control/history", s.getControlHistory)
 		}
 
 		health := api.Group("/health")
@@ -169,6 +171,10 @@ func (s *Server) setupRoutes() {
 			health.GET("", s.healthCheck)
 		}
 	}
+}
+
+func (s *Server) RegisterUI(registerFunc func(*gin.Engine)) {
+	registerFunc(s.router)
 }
 
 func (s *Server) Start() {
@@ -780,5 +786,85 @@ func (s *Server) getQualityMetrics(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"code": 0,
 		"data": metrics,
+	})
+}
+
+func (s *Server) getQualityStats(c *gin.Context) {
+	deviceID := c.Query("device_id")
+	durationStr := c.DefaultQuery("duration", "24h")
+	duration, err := time.ParseDuration(durationStr)
+	if err != nil {
+		duration = 24 * time.Hour
+	}
+
+	stats, err := s.qualityManager.GetStats(c.Request.Context(), deviceID, duration)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 0,
+		"data": stats,
+	})
+}
+
+func (s *Server) getQualityDeviceStats(c *gin.Context) {
+	durationStr := c.DefaultQuery("duration", "24h")
+	duration, err := time.ParseDuration(durationStr)
+	if err != nil {
+		duration = 24 * time.Hour
+	}
+
+	stats, err := s.qualityManager.GetStatsPerDevice(c.Request.Context(), duration)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 0,
+		"data": stats,
+	})
+}
+
+func (s *Server) sendControlCommand(c *gin.Context) {
+	var req struct {
+		DeviceID     string `json:"device_id" binding:"required"`
+		FunctionCode string `json:"function_code" binding:"required"`
+		Payload      string `json:"payload"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": err.Error()})
+		return
+	}
+
+	cmd, err := s.controlManager.QueueCommand(c.Request.Context(), req.DeviceID, req.FunctionCode, req.Payload)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 0,
+		"data": cmd,
+	})
+}
+
+func (s *Server) getControlHistory(c *gin.Context) {
+	deviceID := c.Query("device_id")
+	limitStr := c.DefaultQuery("limit", "20")
+	limit, _ := strconv.Atoi(limitStr)
+
+	cmds, err := s.controlManager.GetHistory(c.Request.Context(), deviceID, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 0,
+		"data": cmds,
 	})
 }

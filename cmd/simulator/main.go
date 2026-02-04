@@ -200,9 +200,10 @@ func (s *Simulator) sendDeviceDataWithTime(device *Device, obsTime time.Time) er
 func main() {
 	rand.Seed(time.Now().UnixNano())
 	serverAddr := "127.0.0.1:8080"
+	//serverAddr = "120.79.72.98:9100"
 
 	simulator := NewSimulator(serverAddr)
-	simulator.AddDevice("1090330853", "演示-完全正常", 10*time.Second, "normal")
+	//simulator.AddDevice("1090330853", "演示-完全正常", 10*time.Second, "normal")
 	simulator.AddDevice("1090330854", "演示-供电异常", 10*time.Second, "solar_fail")
 	simulator.AddDevice("1090330855", "演示-补发测试", 10*time.Second, "network_retry")
 	simulator.AddDevice("1090330856", "常规站点", 15*time.Second, "normal")

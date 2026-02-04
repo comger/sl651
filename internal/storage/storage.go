@@ -397,3 +397,107 @@ func (s *Storage) GetQualityStats(ctx context.Context, deviceID string, start, e
 		"count":            result.Count,
 	}, nil
 }
+
+func (s *Storage) GetQualityStatsPerDevice(ctx context.Context, start, end time.Time) ([]map[string]interface{}, error) {
+	var results []struct {
+		DeviceID        string  `gorm:"column:device_id"`
+		AvgCompleteness float64 `gorm:"column:avg_completeness"`
+		AvgLatency      float64 `gorm:"column:avg_latency"`
+		AvgErrorRate    float64 `gorm:"column:avg_error_rate"`
+		AvgJitter       float64 `gorm:"column:avg_jitter"`
+		AvgScore        float64 `gorm:"column:avg_score"`
+		Count           int64   `gorm:"column:count"`
+		LastTimeStr     string  `gorm:"column:last_time"`
+	}
+
+	query := s.db.WithContext(ctx).Model(&model.QualityMetric{}).
+		Select("device_id, AVG(completeness) as avg_completeness, AVG(latency) as avg_latency, AVG(error_rate) as avg_error_rate, AVG(jitter) as avg_jitter, AVG(score) as avg_score, COUNT(*) as count, MAX(time) as last_time").
+		Group("device_id")
+
+	if !start.IsZero() {
+		query = query.Where("time >= ?", start)
+	}
+	if !end.IsZero() {
+		query = query.Where("time <= ?", end)
+	}
+
+	err := query.Scan(&results).Error
+	if err != nil {
+		return nil, err
+	}
+
+	final := make([]map[string]interface{}, 0)
+	for _, r := range results {
+		lastTime, _ := time.Parse(time.RFC3339, r.LastTimeStr)
+		if r.LastTimeStr != "" && lastTime.IsZero() {
+			// Fallback for standard SQLite format
+			lastTime, _ = time.Parse("2006-01-02 15:04:05", r.LastTimeStr)
+		}
+
+		final = append(final, map[string]interface{}{
+			"device_id":        r.DeviceID,
+			"avg_completeness": r.AvgCompleteness,
+			"avg_latency":      r.AvgLatency,
+			"avg_error_rate":   r.AvgErrorRate,
+			"avg_jitter":       r.AvgJitter,
+			"avg_score":        r.AvgScore,
+			"count":            r.Count,
+			"last_time":        lastTime,
+		})
+	}
+
+	return final, nil
+}
+
+func (s *Storage) SaveCommand(ctx context.Context, cmd *model.DeviceCommand) error {
+	return s.db.WithContext(ctx).Create(cmd).Error
+}
+
+func (s *Storage) GetCommand(ctx context.Context, id string) (*model.DeviceCommand, error) {
+	var cmd model.DeviceCommand
+	err := s.db.WithContext(ctx).Where("id = ?", id).First(&cmd).Error
+	if err != nil {
+		return nil, err
+	}
+	return &cmd, nil
+}
+
+func (s *Storage) UpdateCommandStatus(ctx context.Context, id string, status model.CommandStatus, result string) error {
+	updates := map[string]interface{}{
+		"status":     status,
+		"updated_at": time.Now(),
+	}
+	if status == model.CommandStatusSent {
+		now := time.Now()
+		updates["sent_at"] = &now
+	}
+	if result != "" {
+		updates["result"] = result
+	}
+	return s.db.WithContext(ctx).Model(&model.DeviceCommand{}).Where("id = ?", id).Updates(updates).Error
+}
+
+func (s *Storage) GetCommands(ctx context.Context, deviceID string, limit int) ([]*model.DeviceCommand, error) {
+	var cmds []*model.DeviceCommand
+	query := s.db.WithContext(ctx).Order("created_at DESC")
+	if deviceID != "" {
+		query = query.Where("device_id = ?", deviceID)
+	}
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	err := query.Find(&cmds).Error
+	if err != nil {
+		return nil, err
+	}
+	return cmds, nil
+}
+
+func (s *Storage) ListPendingCommands(ctx context.Context) ([]*model.DeviceCommand, error) {
+	var cmds []*model.DeviceCommand
+	err := s.db.WithContext(ctx).Where("status = ?", model.CommandStatusPending).Find(&cmds).Error
+	if err != nil {
+		return nil, err
+	}
+	return cmds, nil
+}

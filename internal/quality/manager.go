@@ -98,3 +98,9 @@ func (m *Manager) GetStats(ctx context.Context, deviceID string, duration time.D
 	start := end.Add(-duration)
 	return m.storage.GetQualityStats(ctx, deviceID, start, end)
 }
+
+func (m *Manager) GetStatsPerDevice(ctx context.Context, duration time.Duration) ([]map[string]interface{}, error) {
+	end := time.Now()
+	start := end.Add(-duration)
+	return m.storage.GetQualityStatsPerDevice(ctx, start, end)
+}

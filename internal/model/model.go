@@ -406,3 +406,25 @@ type QualityMetric struct {
 	Score        float64   `json:"score"`        // Comprehensive score 0-100
 	Time         time.Time `json:"time" gorm:"index"`
 }
+
+type CommandStatus string
+
+const (
+	CommandStatusPending CommandStatus = "pending"
+	CommandStatusSent    CommandStatus = "sent"
+	CommandStatusSuccess CommandStatus = "success"
+	CommandStatusFailed  CommandStatus = "failed"
+	CommandStatusTimeout CommandStatus = "timeout"
+)
+
+type DeviceCommand struct {
+	ID           string        `json:"id" gorm:"primaryKey"`
+	DeviceID     string        `json:"device_id" gorm:"index"`
+	FunctionCode string        `json:"function_code"`
+	Payload      string        `json:"payload"` // Hex string or JSON
+	Status       CommandStatus `json:"status" gorm:"index"`
+	Result       string        `json:"result"`
+	CreatedAt    time.Time     `json:"created_at" gorm:"autoCreateTime"`
+	SentAt       *time.Time    `json:"sent_at"`
+	UpdatedAt    time.Time     `json:"updated_at" gorm:"autoUpdateTime"`
+}

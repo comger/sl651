@@ -9,7 +9,9 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sl651-platform/internal/config"
+	"sl651-platform/internal/control"
 	"sl651-platform/internal/database"
 	"sl651-platform/internal/device"
 	"sl651-platform/internal/diagnosis"
@@ -21,6 +23,7 @@ import (
 	"sl651-platform/internal/quality"
 	"sl651-platform/internal/sl651"
 	"sl651-platform/internal/storage"
+	"sl651-platform/web"
 	"syscall"
 )
 
@@ -32,9 +35,10 @@ type TCPServer struct {
 	forwardService   *forward.Service
 	diagnosisManager *diagnosis.Manager
 	qualityManager   *quality.Manager
+	controlManager   *control.Manager
 }
 
-func NewTCPServer(addr string, protocol *sl651.Protocol, deviceManager *device.Manager, forwardService *forward.Service, diagnosisManager *diagnosis.Manager, qualityManager *quality.Manager) *TCPServer {
+func NewTCPServer(addr string, protocol *sl651.Protocol, deviceManager *device.Manager, forwardService *forward.Service, diagnosisManager *diagnosis.Manager, qualityManager *quality.Manager, controlManager *control.Manager) *TCPServer {
 	return &TCPServer{
 		addr:             addr,
 		protocol:         protocol,
@@ -42,6 +46,7 @@ func NewTCPServer(addr string, protocol *sl651.Protocol, deviceManager *device.M
 		forwardService:   forwardService,
 		diagnosisManager: diagnosisManager,
 		qualityManager:   qualityManager,
+		controlManager:   controlManager,
 	}
 }
 
@@ -121,10 +126,28 @@ func (s *TCPServer) handleConnection(ctx context.Context, conn net.Conn) {
 		s.diagnosisManager.HandleCommError(ctx, msg.StationID, model.FaultTypeData, model.SeverityWarning, "Device Process Error", err.Error())
 	}
 
-	// Send Success Response (Function Code - 0x32 for timed report etc)
-	response, _ := s.protocol.BuildMessage(msg.StationID, 0xA1, nil) // A1 is often Success Response in some contexts, or just follow standard
+	// Handle Control Responses (40H-4FH)
+	if msg.FunctionCodeByte >= 0x40 && msg.FunctionCodeByte <= 0x4F {
+		s.controlManager.HandleResponse(ctx, msg.StationID, msg.FunctionCode, msg.Payload)
+		return
+	}
+
+	// Standard Report Acknowledgment
+	// In SL651, the response usually has the same function code as the request
+	response, _ := s.protocol.BuildMessage(msg.StationID, msg.FunctionCodeByte, nil)
 	conn.Write(response)
-	log.Printf("Sent Response: %x", response)
+
+	// Check for pending downlink commands
+	pendingCmd := s.controlManager.PopPending(ctx, msg.StationID)
+	if pendingCmd != nil {
+		cmdFrame, err := s.controlManager.BuildCommandFrame(pendingCmd)
+		if err == nil {
+			conn.Write(cmdFrame)
+			log.Printf("Sent downlink command %s to device %s: %x", pendingCmd.ID, msg.StationID, cmdFrame)
+		} else {
+			log.Printf("Failed to build command frame for %s: %v", pendingCmd.ID, err)
+		}
+	}
 }
 
 func (s *TCPServer) Stop() {
@@ -140,6 +163,12 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
+	}
+
+	// Ensure logging directory exists
+	logDir := filepath.Dir(cfg.Logging.File)
+	if _, err := os.Stat(logDir); os.IsNotExist(err) {
+		os.MkdirAll(logDir, 0755)
 	}
 
 	db, err := database.Init(cfg.Database.Path)
@@ -158,12 +187,17 @@ func main() {
 	deviceManager := device.NewManager(storage, protocol)
 	forwardService := forward.NewService(storage)
 	notifierService := notifier.NewNotifier()
+	controlManager := control.NewManager(storage, protocol)
 	heartbeatManager := heartbeat.NewHeartbeatManager(cfg.Heartbeat, deviceManager, notifierService)
 
 	go diagnosisManager.LogSystemEvent(ctx, "INFO", "System", "Platform starting...")
 	go diagnosisManager.LogSystemEvent(ctx, "INFO", "Database", "Database initialized and migrated")
 
-	tcpServer := NewTCPServer(":8080", protocol, deviceManager, forwardService, diagnosisManager, qualityManager)
+	if err := controlManager.Start(ctx); err != nil {
+		log.Printf("Failed to start control manager: %v", err)
+	}
+
+	tcpServer := NewTCPServer(":8080", protocol, deviceManager, forwardService, diagnosisManager, qualityManager, controlManager)
 	go func() {
 		if err := tcpServer.Start(ctx); err != nil {
 			log.Printf("TCP server error: %v", err)
@@ -180,7 +214,9 @@ func main() {
 		}
 	}()
 
-	httpServer := http.NewServer(cfg, deviceManager, forwardService, heartbeatManager, diagnosisManager, qualityManager)
+	httpServer := http.NewServer(cfg, deviceManager, forwardService, heartbeatManager, diagnosisManager, qualityManager, controlManager)
+	// Register Embedded UI
+	httpServer.RegisterUI(web.RegisterStaticRoutes)
 	go httpServer.Start()
 
 	sigChan := make(chan os.Signal, 1)

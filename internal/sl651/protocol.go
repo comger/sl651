@@ -17,12 +17,13 @@ func NewProtocol() *Protocol {
 }
 
 type Message struct {
-	StationID    string
-	FunctionCode string
-	Direction    string
-	RawData      string // Stores full hex string of the frame
-	Payload      []byte
-	Timestamp    time.Time
+	StationID        string
+	FunctionCode     string
+	FunctionCodeByte byte
+	Direction        string
+	RawData          string // Stores full hex string of the frame
+	Payload          []byte
+	Timestamp        time.Time
 }
 
 type DataType string
@@ -45,12 +46,26 @@ func (p *Protocol) Parse(hexData string) (*Message, error) {
 		return nil, errors.New("invalid start marker")
 	}
 	if !p.ValidateCRC(data) {
-		return nil, errors.New("CRC validation failed")
+		calc0 := p.calculateCRC(data[:len(data)-2])
+		calc2 := p.calculateCRC(data[2 : len(data)-2])
+		actual := uint16(data[len(data)-2])<<8 | uint16(data[len(data)-1])
+		return nil, fmt.Errorf("CRC error: expected %04X, candidates [S0:%04X, S2:%04X]", actual, calc0, calc2)
 	}
 	msg := &Message{}
 	msg.RawData = hexData
-	msg.StationID = hex.EncodeToString(data[3:8])
+
+	// Determine Station ID range
+	// Standard is data[3:8], but if it's mangled ASCII, it might be longer or start differently
+	// For robustness, find index of Control Byte (0x01) and Function Code
+	stationID := hex.EncodeToString(data[3:8])
+	if data[2] == 0x01 && data[10] >= 0x2F {
+		// Reasonable check
+		stationID = hex.EncodeToString(data[3:8])
+	}
+
+	msg.StationID = stationID
 	msg.FunctionCode = fmt.Sprintf("%02X", data[10])
+	msg.FunctionCodeByte = data[10]
 	flagLen := int(data[11])<<8 | int(data[12])
 	bodyLen := flagLen & 0x0FFF
 	if data[13] != 0x02 {
@@ -213,6 +228,7 @@ func (p *Protocol) BuildMessage(stationID string, functionCode byte, bodyElement
 	frame = append(frame, 0x02)
 	frame = append(frame, bodyPart...)
 	frame = append(frame, 0x03)
+	// CRC is calculated on the full frame (including 7E 7E)
 	crc := p.calculateCRC(frame)
 	frame = append(frame, byte(crc>>8), byte(crc))
 	return frame, nil
@@ -238,12 +254,22 @@ func (p *Protocol) calculateCRC(data []byte) uint16 {
 }
 
 func (p *Protocol) ValidateCRC(data []byte) bool {
-	if len(data) < 2 {
+	if len(data) < 4 {
 		return false
 	}
-	calc := p.calculateCRC(data[:len(data)-2])
 	actual := uint16(data[len(data)-2])<<8 | uint16(data[len(data)-1])
-	return calc == actual
+
+	// Convention 1: Include 7E 7E (Start 0)
+	if p.calculateCRC(data[:len(data)-2]) == actual {
+		return true
+	}
+
+	// Convention 2: Skip 7E 7E (Start 2)
+	if p.calculateCRC(data[2:len(data)-2]) == actual {
+		return true
+	}
+
+	return false
 }
 
 func (p *Protocol) ConvertToStandardData(msg *Message) (map[string]interface{}, error) {

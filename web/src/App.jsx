@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Layout, Table, Checkbox, Card, Typography, Space, Tag, theme, Divider, Empty, ConfigProvider, Statistic, Row, Col, Badge, Button, Modal, Form, InputNumber, Tooltip, Drawer, Timeline, Menu, Progress } from 'antd';
-import { DatabaseOutlined, HddOutlined, SyncOutlined, SettingOutlined, DashboardOutlined, HistoryOutlined, AlertOutlined, SafetyCertificateOutlined, BugOutlined, ProfileOutlined, SignalFilled } from '@ant-design/icons';
+import { Layout, Table, Checkbox, Card, Typography, Space, Tag, theme, Divider, Empty, ConfigProvider, Statistic, Row, Col, Badge, Button, Modal, Form, InputNumber, Tooltip, Drawer, Timeline, Menu, Progress, Input, Select, message } from 'antd';
+import { DatabaseOutlined, HddOutlined, SyncOutlined, SettingOutlined, DashboardOutlined, HistoryOutlined, AlertOutlined, SafetyCertificateOutlined, BugOutlined, ProfileOutlined, SignalFilled, ControlOutlined, SendOutlined, ReadOutlined } from '@ant-design/icons';
 import axios from 'axios';
 import moment from 'moment';
 
@@ -25,12 +25,19 @@ const App = () => {
   const [faultLogs, setFaultLogs] = useState([]);
   const [systemLogs, setSystemLogs] = useState([]);
   const [qualityMetrics, setQualityMetrics] = useState([]);
+  const [qualityStats, setQualityStats] = useState({});
+  const [qualityDeviceStats, setQualityDeviceStats] = useState([]);
+  const [qualityDuration, setQualityDuration] = useState('24h');
   const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
   const [isTrendDrawerOpen, setIsTrendDrawerOpen] = useState(false);
   const [trendData, setTrendData] = useState([]);
   const [activeTab, setActiveTab] = useState('monitoring');
   const [configLoading, setConfigLoading] = useState(false);
+  const [controlHistory, setControlHistory] = useState([]);
+  const [executingCmd, setExecutingCmd] = useState(false);
+  const [controlDeviceID, setControlDeviceID] = useState('');
   const [form] = Form.useForm();
+  const [cmdForm] = Form.useForm();
 
   const {
     token: { colorBgContainer, borderRadiusLG },
@@ -52,10 +59,15 @@ const App = () => {
       }
       if (activeTab === 'quality') {
         fetchQualityMetrics();
+        fetchQualityStats();
+        fetchQualityDeviceStats();
+      }
+      if (activeTab === 'control') {
+        fetchControlHistory(controlDeviceID);
       }
     }, 10000);
     return () => clearInterval(interval);
-  }, [activeTab]);
+  }, [activeTab, controlDeviceID]);
 
   // Poll data based on selection
   useEffect(() => {
@@ -164,12 +176,77 @@ const App = () => {
 
   const fetchQualityMetrics = async () => {
     try {
-      const res = await api.get('/diagnosis/quality', { params: { limit: 100 } });
+      const params = { limit: 100 };
+      if (selectedStationIDs.length === 1) {
+        params.device_id = selectedStationIDs[0];
+      }
+      const res = await api.get('/diagnosis/quality', { params });
       if (res.data.code === 0) {
         setQualityMetrics(res.data.data || []);
       }
     } catch (error) {
       console.error('Failed to fetch quality metrics:', error);
+    }
+  };
+
+  const fetchQualityStats = async () => {
+    try {
+      const params = { duration: qualityDuration };
+      if (selectedStationIDs.length === 1) {
+        params.device_id = selectedStationIDs[0];
+      }
+      const res = await api.get('/diagnosis/quality/stats', { params });
+      if (res.data.code === 0) {
+        setQualityStats(res.data.data || {});
+      }
+      // Also update the device-level list whenever analysis is triggered
+      fetchQualityDeviceStats();
+    } catch (error) {
+      console.error('Failed to fetch quality stats:', error);
+    }
+  };
+
+  const fetchQualityDeviceStats = async () => {
+    try {
+      const params = { duration: qualityDuration };
+      const res = await api.get('/diagnosis/quality/devices', { params });
+      if (res.data.code === 0) {
+        setQualityDeviceStats(res.data.data || []);
+      }
+    } catch (error) {
+      console.error('Failed to fetch quality device stats:', error);
+    }
+  };
+
+  const fetchControlHistory = async (deviceID = '') => {
+    try {
+      const params = deviceID ? { device_id: deviceID } : {};
+      const res = await api.get('/diagnosis/control/history', { params });
+      if (res.data.code === 0) {
+        setControlHistory(res.data.data || []);
+      }
+    } catch (error) {
+      console.error('Failed to fetch control history:', error);
+    }
+  };
+
+  const handleSendCommand = async (values) => {
+    setExecutingCmd(true);
+    try {
+      const res = await api.post('/diagnosis/control/command', {
+        device_id: values.device_id,
+        function_code: values.function_code,
+        payload: values.payload
+      });
+      if (res.data.code === 0) {
+        message.success('指令已加入队列，等待设备上报时下发');
+        fetchControlHistory(values.device_id);
+      }
+    } catch (error) {
+      console.error('Failed to send command:', error);
+      message.error('发送指令失败');
+    } finally {
+      setExecutingCmd(false);
     }
   };
 
@@ -322,6 +399,7 @@ const App = () => {
                 { key: 'monitoring', icon: <DashboardOutlined />, label: '实时监测' },
                 { key: 'diagnosis', icon: <BugOutlined />, label: '运维审计' },
                 { key: 'quality', icon: <SignalFilled />, label: '质量评估' },
+                { key: 'control', icon: <ControlOutlined />, label: '远程配置' },
               ]}
             />
           </div>
@@ -530,19 +608,130 @@ const App = () => {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                 <Row gutter={16}>
                   <Col span={24}>
-                    <Card title={<span><SignalFilled style={{ color: '#1890ff' }} /> 全局报文质量概览</span>} bordered={false} style={{ borderRadius: borderRadiusLG }}>
+                    <Card
+                      title={<span><SignalFilled style={{ color: '#1890ff' }} /> 报文质量统计分析</span>}
+                      extra={
+                        <Space>
+                          <Text type="secondary">分析周期:</Text>
+                          <select
+                            value={qualityDuration}
+                            onChange={(e) => setQualityDuration(e.target.value)}
+                            style={{ padding: '2px 8px', borderRadius: '4px', border: '1px solid #d9d9d9' }}
+                          >
+                            <option value="1h">最近1小时</option>
+                            <option value="6h">最近6小时</option>
+                            <option value="24h">最近24小时</option>
+                            <option value="168h">最近7天</option>
+                          </select>
+                          <Button size="small" type="primary" onClick={fetchQualityStats} ghost icon={<SyncOutlined />}>立即分析</Button>
+                        </Space>
+                      }
+                      bordered={false}
+                      style={{ borderRadius: borderRadiusLG }}
+                    >
+                      <Row gutter={16}>
+                        <Col span={4}>
+                          <Statistic title="综合质量评分" value={qualityStats.avg_score || 0} precision={2} suffix="/ 100" valueStyle={{ color: (qualityStats.avg_score || 0) > 80 ? '#3f8600' : '#cf1322' }} />
+                        </Col>
+                        <Col span={4}>
+                          <Statistic title="平均完整度" value={qualityStats.avg_completeness || 0} precision={2} suffix="%" />
+                        </Col>
+                        <Col span={4}>
+                          <Statistic title="平均延时" value={qualityStats.avg_latency || 0} precision={3} suffix="s" />
+                        </Col>
+                        <Col span={4}>
+                          <Statistic title="平均误码率" value={qualityStats.avg_error_rate || 0} precision={3} suffix="%" valueStyle={{ color: (qualityStats.avg_error_rate || 0) < 1 ? '#3f8600' : '#cf1322' }} />
+                        </Col>
+                        <Col span={4}>
+                          <Statistic title="平均抖动" value={qualityStats.avg_jitter || 0} precision={3} suffix="s" />
+                        </Col>
+                        <Col span={4}>
+                          <Statistic title="样本总数" value={qualityStats.count || 0} prefix={<DatabaseOutlined />} />
+                        </Col>
+                      </Row>
+                    </Card>
+                  </Col>
+                </Row>
+
+                <Card title={<span><HistoryOutlined /> 各设备质量评估 (按周期统计)</span>} bordered={false} style={{ borderRadius: borderRadiusLG }}>
+                  <Table
+                    dataSource={qualityDeviceStats}
+                    rowKey="device_id"
+                    pagination={{ pageSize: 10 }}
+                    size="middle"
+                    columns={[
+                      { title: '设备ID', dataIndex: 'device_id', width: 120, render: id => <Tag color="blue">{id}</Tag> },
+                      { title: '综合评分', dataIndex: 'avg_score', width: 150, render: s => <Progress percent={Math.round(s)} size="small" status={s < 60 ? 'exception' : s < 85 ? 'normal' : 'success'} /> },
+                      { title: '平均完整度', dataIndex: 'avg_completeness', width: 110, render: c => <Tag color={c > 99 ? 'green' : 'orange'}>{c.toFixed(2)}%</Tag> },
+                      { title: '平均延时', dataIndex: 'avg_latency', width: 100, render: l => <Tag color={l < 3 ? 'cyan' : 'red'}>{l.toFixed(3)}s</Tag> },
+                      { title: '误码率', dataIndex: 'avg_error_rate', width: 100, render: e => <Text type={e > 1 ? 'danger' : ''}>{e.toFixed(3)}%</Text> },
+                      { title: '抖动', dataIndex: 'avg_jitter', width: 100, render: j => <Text secondary>{j.toFixed(4)}s</Text> },
+                      { title: '报文总数', dataIndex: 'count', width: 100 },
+                      { title: '最后评估', dataIndex: 'last_time', render: t => moment(t).format('HH:mm:ss') },
+                    ]}
+                  />
+                </Card>
+              </div>
+            )}
+            {activeTab === 'control' && (
+              <div style={{ padding: '0 20px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                <Row gutter={20}>
+                  <Col span={8}>
+                    <Card title={<span><ControlOutlined /> 下发控制指令</span>} bordered={false} style={{ borderRadius: borderRadiusLG }}>
+                      <Form form={cmdForm} layout="vertical" onFinish={handleSendCommand}>
+                        <Form.Item name="device_id" label="目标设备" rules={[{ required: true }]}>
+                          <Select
+                            placeholder="请选择目标设备"
+                            options={devices.map(d => ({ label: `${d.name} (${d.id})`, value: d.id }))}
+                            onChange={v => {
+                              setControlDeviceID(v);
+                              fetchControlHistory(v);
+                            }}
+                          />
+                        </Form.Item>
+                        <Form.Item name="function_code" label="功能码" rules={[{ required: true }]}>
+                          <Select placeholder="请选择指令类型">
+                            <Select.Option value="40">读取工作参数 (40H)</Select.Option>
+                            <Select.Option value="41">读取运行状态 (41H)</Select.Option>
+                            <Select.Option value="42">修改工作参数 (42H)</Select.Option>
+                            <Select.Option value="43">修改运行状态 (43H)</Select.Option>
+                          </Select>
+                        </Form.Item>
+                        <Form.Item name="payload" label="参数内容 (HEX)" help="请输入符合SL651规约的TLV数据或参数标识符">
+                          <Input.TextArea rows={4} placeholder="例如: 010203 (读取配置1,2,3)" />
+                        </Form.Item>
+                        <Button type="primary" htmlType="submit" icon={<SendOutlined />} loading={executingCmd} block>
+                          加入发送队列
+                        </Button>
+                      </Form>
+                    </Card>
+                    <Card title="常用指令快速配置" style={{ marginTop: '20px', borderRadius: borderRadiusLG }}>
+                      <Space direction="vertical" style={{ width: '100%' }}>
+                        <Button size="small" onClick={() => cmdForm.setFieldsValue({ function_code: '40', payload: '01020304' })}>读取站号与主中心 (01-04)</Button>
+                        <Button size="small" onClick={() => cmdForm.setFieldsValue({ function_code: '40', payload: '14' })}>读取定时报间隔 (14H)</Button>
+                      </Space>
+                    </Card>
+                  </Col>
+                  <Col span={16}>
+                    <Card title={<span><HistoryOutlined /> 指令下发历史</span>} bordered={false} style={{ borderRadius: borderRadiusLG }}>
                       <Table
-                        dataSource={qualityMetrics}
+                        dataSource={controlHistory}
                         rowKey="id"
-                        pagination={{ pageSize: 15 }}
+                        size="small"
+                        pagination={{ pageSize: 12 }}
                         columns={[
-                          { title: '评估时间', dataIndex: 'time', width: 170, render: t => moment(t).format('YYYY-MM-DD HH:mm:ss') },
-                          { title: '设备ID', dataIndex: 'device_id', width: 120 },
-                          { title: '综合评分', dataIndex: 'score', width: 150, render: s => <Progress percent={Math.round(s)} size="small" status={s < 60 ? 'exception' : s < 85 ? 'normal' : 'success'} /> },
-                          { title: '完整度', dataIndex: 'completeness', width: 100, render: c => <Tag color={c > 99 ? 'green' : 'orange'}>{c.toFixed(1)}%</Tag> },
-                          { title: '网络延时', dataIndex: 'latency', width: 100, render: l => <Tag color={l < 3 ? 'green' : 'red'}>{l.toFixed(2)}s</Tag> },
-                          { title: '通信误码率', dataIndex: 'error_rate', width: 100, render: e => <Tag color={e < 1 ? 'blue' : 'volcano'}>{e.toFixed(2)}%</Tag> },
-                          { title: '网动抖动', dataIndex: 'jitter', width: 100, render: j => <Text type={j > 1 ? 'danger' : 'secondary'}>{j.toFixed(3)}s</Text> },
+                          { title: '指令ID', dataIndex: 'id', width: 140, render: id => <Text type="secondary" style={{ fontSize: '10px' }}>{id}</Text> },
+                          { title: '功能', dataIndex: 'function_code', width: 100, render: c => <Tag color="blue">{c}H</Tag> },
+                          {
+                            title: '状态', dataIndex: 'status', width: 100, render: s => (
+                              <Tag color={s === 'success' ? 'green' : s === 'sent' ? 'processing' : s === 'pending' ? 'orange' : 'red'}>
+                                {s === 'success' ? '成功' : s === 'sent' ? '已下发' : s === 'pending' ? '待机' : '失败'}
+                              </Tag>
+                            )
+                          },
+                          { title: '载荷', dataIndex: 'payload', ellipsis: true },
+                          { title: '结果', dataIndex: 'result', ellipsis: true, render: r => r || '-' },
+                          { title: '创建时间', dataIndex: 'created_at', render: t => moment(t).format('HH:mm:ss') },
                         ]}
                       />
                     </Card>
@@ -550,6 +739,7 @@ const App = () => {
                 </Row>
               </div>
             )}
+
 
             <Modal
               title={<span><SettingOutlined /> 心跳监测全球配置</span>}
