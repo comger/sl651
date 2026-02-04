@@ -358,3 +358,39 @@ type StatusHistory struct {
 	Status   DeviceStatus `json:"status" gorm:"not null"`
 	Time     time.Time    `json:"time" gorm:"index"`
 }
+
+type Severity string
+
+const (
+	SeverityInfo     Severity = "info"
+	SeverityWarning  Severity = "warning"
+	SeverityError    Severity = "error"
+	SeverityCritical Severity = "critical"
+)
+
+type FaultType string
+
+const (
+	FaultTypeComm     FaultType = "communication"
+	FaultTypeData     FaultType = "data"
+	FaultTypeHardware FaultType = "hardware"
+)
+
+type FaultLog struct {
+	ID       uint      `json:"id" gorm:"primaryKey"`
+	DeviceID string    `json:"device_id" gorm:"index"`
+	Type     FaultType `json:"type" gorm:"not null"`
+	Severity Severity  `json:"severity" gorm:"not null"`
+	Message  string    `json:"message" gorm:"not null"`
+	Details  string    `json:"details"`
+	Time     time.Time `json:"time" gorm:"index"`
+	Resolved bool      `json:"resolved" gorm:"default:false"`
+}
+
+type SystemLog struct {
+	ID      uint      `json:"id" gorm:"primaryKey"`
+	Level   string    `json:"level" gorm:"index"`
+	Source  string    `json:"source" gorm:"index"`
+	Message string    `json:"message"`
+	Time    time.Time `json:"time" gorm:"index"`
+}

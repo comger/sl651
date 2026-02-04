@@ -311,3 +311,34 @@ func (s *Storage) GetTrendStatistics(ctx context.Context, start, end time.Time) 
 	}
 	return results, nil
 }
+
+func (s *Storage) SaveFaultLog(ctx context.Context, log *model.FaultLog) error {
+	return s.db.WithContext(ctx).Create(log).Error
+}
+
+func (s *Storage) GetFaultLogs(ctx context.Context, deviceID string, limit int) ([]*model.FaultLog, error) {
+	var logs []*model.FaultLog
+	query := s.db.WithContext(ctx).Order("time DESC")
+	if deviceID != "" {
+		query = query.Where("device_id = ?", deviceID)
+	}
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	err := query.Find(&logs).Error
+	return logs, err
+}
+
+func (s *Storage) SaveSystemLog(ctx context.Context, log *model.SystemLog) error {
+	return s.db.WithContext(ctx).Create(log).Error
+}
+
+func (s *Storage) GetSystemLogs(ctx context.Context, limit int) ([]*model.SystemLog, error) {
+	var logs []*model.SystemLog
+	query := s.db.WithContext(ctx).Order("time DESC")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	err := query.Find(&logs).Error
+	return logs, err
+}

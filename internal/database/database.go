@@ -23,5 +23,7 @@ func AutoMigrate(db *gorm.DB) error {
 		&model.ForwardRule{},
 		&model.ForwardLog{},
 		&model.StatusHistory{},
+		&model.FaultLog{},
+		&model.SystemLog{},
 	)
 }

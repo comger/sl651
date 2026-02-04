@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Layout, Table, Checkbox, Card, Typography, Space, Tag, theme, Divider, Empty, ConfigProvider } from 'antd';
-import { DatabaseOutlined, HddOutlined, SyncOutlined } from '@ant-design/icons';
+import { Layout, Table, Checkbox, Card, Typography, Space, Tag, theme, Divider, Empty, ConfigProvider, Statistic, Row, Col, Badge, Button, Modal, Form, InputNumber, Tooltip, Drawer, Timeline } from 'antd';
+import { DatabaseOutlined, HddOutlined, SyncOutlined, SettingOutlined, DashboardOutlined, HistoryOutlined } from '@ant-design/icons';
 import axios from 'axios';
 import moment from 'moment';
 
@@ -19,14 +19,30 @@ const App = () => {
   const [loading, setLoading] = useState(false);
   const [limit, setLimit] = useState(50);
   const [refreshInterval, setRefreshInterval] = useState(5);
+  const [stats, setStats] = useState({ total: 0, online: 0, offline: 0 });
+  const [hbStatus, setHbStatus] = useState({});
+  const [hbConfig, setHbConfig] = useState({ check_interval: 60, default_timeout: 300 });
+  const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
+  const [isTrendDrawerOpen, setIsTrendDrawerOpen] = useState(false);
+  const [trendData, setTrendData] = useState([]);
+  const [configLoading, setConfigLoading] = useState(false);
+  const [form] = Form.useForm();
+
   const {
     token: { colorBgContainer, borderRadiusLG },
   } = theme.useToken();
 
-  // Fetch devices on mount
+  // Fetch metadata and stats
   useEffect(() => {
     fetchDevices();
-    const interval = setInterval(fetchDevices, 30000);
+    fetchStats();
+    fetchHbStatus();
+    fetchHbConfig();
+    const interval = setInterval(() => {
+      fetchDevices();
+      fetchStats();
+      fetchHbStatus();
+    }, 10000);
     return () => clearInterval(interval);
   }, []);
 
@@ -51,6 +67,71 @@ const App = () => {
     } catch (error) {
       console.error('Failed to fetch devices:', error);
     }
+  };
+
+  const fetchStats = async () => {
+    try {
+      const res = await api.get('/statistics/online');
+      if (res.data.code === 0) {
+        setStats(res.data.data);
+      }
+    } catch (error) {
+      console.error('Failed to fetch stats:', error);
+    }
+  };
+
+  const fetchHbStatus = async () => {
+    try {
+      const res = await api.get('/heartbeat/status');
+      if (res.data.code === 0) {
+        setHbStatus(res.data.data || {});
+      }
+    } catch (error) {
+      console.error('Failed to fetch hb status:', error);
+    }
+  };
+
+  const fetchHbConfig = async () => {
+    try {
+      const res = await api.get('/heartbeat/config');
+      if (res.data.code === 0) {
+        setHbConfig(res.data.data);
+        form.setFieldsValue(res.data.data);
+      }
+    } catch (error) {
+      console.error('Failed to fetch hb config:', error);
+    }
+  };
+
+  const updateHbConfig = async (values) => {
+    setConfigLoading(true);
+    try {
+      const res = await api.put('/heartbeat/config', values);
+      if (res.data.code === 0) {
+        setHbConfig(values);
+        setIsConfigModalOpen(false);
+      }
+    } catch (error) {
+      console.error('Failed to update hb config:', error);
+    } finally {
+      setConfigLoading(false);
+    }
+  };
+
+  const fetchTrendData = async () => {
+    try {
+      const res = await api.get('/statistics/trend');
+      if (res.data.code === 0) {
+        setTrendData(res.data.data || []);
+      }
+    } catch (error) {
+      console.error('Failed to fetch trend:', error);
+    }
+  };
+
+  const openTrendDrawer = async () => {
+    await fetchTrendData();
+    setIsTrendDrawerOpen(true);
   };
 
   const fetchData = async () => {
@@ -195,22 +276,74 @@ const App = () => {
                 value={selectedStationIDs}
                 onChange={handleDeviceChange}
               >
-                {devices.map(dev => (
-                  <Card key={dev.id} size="small" hoverable style={{ borderLeft: '4px solid #1890ff' }} bodyStyle={{ padding: '8px' }}>
-                    <Checkbox value={dev.id} style={{ width: '100%', marginLeft: 0 }}>
-                      <Space direction="vertical" size={0} style={{ width: '100%' }}>
-                        <Text strong>{dev.name || '未命名设备'}</Text>
-                        <Text type="secondary" style={{ fontSize: '12px' }}>ID: {dev.id}</Text>
-                      </Space>
-                    </Checkbox>
-                  </Card>
-                ))}
+                {devices.map(dev => {
+                  const status = hbStatus[dev.id];
+                  const isOnline = status ? status.online : (dev.status === 'online');
+                  return (
+                    <Card
+                      key={dev.id}
+                      size="small"
+                      hoverable
+                      style={{
+                        borderLeft: `4px solid ${isOnline ? '#52c41a' : '#bfbfbf'}`,
+                        marginBottom: '8px'
+                      }}
+                      bodyStyle={{ padding: '8px' }}
+                    >
+                      <Checkbox value={dev.id} style={{ width: '100%', marginLeft: 0 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', width: '100%' }}>
+                          <Space direction="vertical" size={0}>
+                            <Text strong>{dev.name || '未命名设备'}</Text>
+                            <Text type="secondary" style={{ fontSize: '11px' }}>ID: {dev.id}</Text>
+                          </Space>
+                          <Badge
+                            status={isOnline ? 'processing' : 'default'}
+                            text={<Text style={{ fontSize: '11px' }} type={isOnline ? 'success' : 'secondary'}>{isOnline ? '在线' : '离线'}</Text>}
+                          />
+                        </div>
+                      </Checkbox>
+                    </Card>
+                  );
+                })}
               </Checkbox.Group>
             ) : (
               <Empty description="暂无在线设备" image={Empty.PRESENTED_IMAGE_SIMPLE} />
             )}
           </Sider>
-          <Content style={{ padding: '24px', overflow: 'hidden', background: '#f0f2f5', display: 'flex', flexDirection: 'column' }}>
+          <Content style={{ padding: '24px', overflowY: 'auto', background: '#f0f2f5', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <Row gutter={16}>
+              <Col span={8}>
+                <Card bordered={false} style={{ borderRadius: borderRadiusLG }}>
+                  <Statistic
+                    title="总设备数"
+                    value={stats.total}
+                    prefix={<HddOutlined />}
+                    valueStyle={{ color: '#001529' }}
+                  />
+                </Card>
+              </Col>
+              <Col span={8}>
+                <Card bordered={false} style={{ borderRadius: borderRadiusLG }}>
+                  <Statistic
+                    title="当前在线"
+                    value={stats.online}
+                    prefix={<SyncOutlined spin={stats.online > 0} />}
+                    valueStyle={{ color: '#52c41a' }}
+                  />
+                </Card>
+              </Col>
+              <Col span={8}>
+                <Card bordered={false} style={{ borderRadius: borderRadiusLG }}>
+                  <Statistic
+                    title="离线警告"
+                    value={stats.offline}
+                    prefix={<HistoryOutlined />}
+                    valueStyle={{ color: stats.offline > 0 ? '#ff4d4f' : '#8c8c8c' }}
+                  />
+                </Card>
+              </Col>
+            </Row>
+
             <Card
               bordered={false}
               style={{ borderRadius: borderRadiusLG, boxShadow: '0 1px 2px 0 rgba(0,0,0,0.03)', flex: 1, display: 'flex', flexDirection: 'column' }}
@@ -220,34 +353,47 @@ const App = () => {
                 <Space>
                   <SyncOutlined spin={loading} />
                   <Title level={5} style={{ margin: 0 }}>实时报文</Title>
-                  {selectedStationIDs.length > 0 ? <Tag color="processing">筛选: {selectedStationIDs.length} 个设备</Tag> : <Tag>显示全部</Tag>}
+                  {selectedStationIDs.length > 0 ? <Tag color="processing">已选: {selectedStationIDs.length}</Tag> : <Tag>全部</Tag>}
                 </Space>
                 <Space size="large">
                   <Space>
-                    <Text>日志条数:</Text>
+                    <Text secondary style={{ fontSize: '12px' }}>条数:</Text>
                     <input
                       type="range"
                       min="10"
                       max="100"
                       value={limit}
                       onChange={(e) => setLimit(parseInt(e.target.value))}
-                      style={{ width: '100px' }}
+                      style={{ width: '80px' }}
                     />
-                    <Tag>{limit}</Tag>
+                    <Tag style={{ margin: 0 }}>{limit}</Tag>
                   </Space>
                   <Space>
-                    <Text>刷新频率:</Text>
+                    <Text secondary style={{ fontSize: '12px' }}>频率:</Text>
                     <select
                       value={refreshInterval}
                       onChange={(e) => setRefreshInterval(parseInt(e.target.value))}
-                      style={{ padding: '4px', borderRadius: '4px', border: '1px solid #d9d9d9' }}
+                      style={{ padding: '2px 4px', borderRadius: '4px', border: '1px solid #d9d9d9', fontSize: '12px' }}
                     >
-                      <option value={5}>5秒</option>
-                      <option value={10}>10秒</option>
-                      <option value={30}>30秒</option>
-                      <option value={60}>60秒</option>
+                      <option value={5}>5s</option>
+                      <option value={10}>10s</option>
+                      <option value={30}>30s</option>
                     </select>
                   </Space>
+                  <Tooltip title="查看运行轨迹">
+                    <Button
+                      type="text"
+                      icon={<HistoryOutlined />}
+                      onClick={openTrendDrawer}
+                    />
+                  </Tooltip>
+                  <Tooltip title="心跳管理配置">
+                    <Button
+                      type="text"
+                      icon={<SettingOutlined />}
+                      onClick={() => setIsConfigModalOpen(true)}
+                    />
+                  </Tooltip>
                 </Space>
               </div>
               <Table
@@ -256,10 +402,68 @@ const App = () => {
                 rowKey="id"
                 pagination={false}
                 size="middle"
-                style={{ flex: 1, overflow: 'hidden' }}
-                scroll={{ y: 'calc(100vh - 200px)' }}
+                style={{ flex: 1 }}
+                scroll={{ y: 'calc(100vh - 360px)' }}
               />
             </Card>
+
+            <Modal
+              title={<span><SettingOutlined /> 心跳监测全球配置</span>}
+              open={isConfigModalOpen}
+              onOk={() => form.submit()}
+              onCancel={() => setIsConfigModalOpen(false)}
+              confirmLoading={configLoading}
+              okText="保存配置"
+              cancelText="取消"
+            >
+              <Form
+                form={form}
+                layout="vertical"
+                onFinish={updateHbConfig}
+                initialValues={hbConfig}
+              >
+                <Form.Item
+                  name="check_interval"
+                  label="监测巡检间隔 (秒)"
+                  extra="系统对所有设备进行活跃度盘点的时间间隔"
+                  rules={[{ required: true, message: '请输入巡检间隔' }]}
+                >
+                  <InputNumber min={5} max={3600} style={{ width: '100%' }} />
+                </Form.Item>
+                <Form.Item
+                  name="default_timeout"
+                  label="默认超时判定 (秒)"
+                  extra="超过此时间未收到任何报文即判定为离线"
+                  rules={[{ required: true, message: '请输入判定超时' }]}
+                >
+                  <InputNumber min={10} max={86400} style={{ width: '100%' }} />
+                </Form.Item>
+              </Form>
+            </Modal>
+            <Drawer
+              title={<span><HistoryOutlined /> 设备运行轨迹 (最近24小时)</span>}
+              placement="right"
+              onClose={() => setIsTrendDrawerOpen(false)}
+              open={isTrendDrawerOpen}
+              width={400}
+            >
+              {trendData.length > 0 ? (
+                <Timeline
+                  items={trendData.map((item, index) => ({
+                    color: item.status === 'online' ? 'green' : 'gray',
+                    children: (
+                      <div>
+                        <Text strong>[{item.device_id}]</Text> 变为 <Tag color={item.status === 'online' ? 'success' : 'default'}>{item.status === 'online' ? '在线' : '离线'}</Tag>
+                        <br />
+                        <Text type="secondary" style={{ fontSize: '12px' }}>{moment(item.time).format('MM-DD HH:mm:ss')}</Text>
+                      </div>
+                    ),
+                  })).reverse()}
+                />
+              ) : (
+                <Empty description="暂无历史轨迹记录" />
+              )}
+            </Drawer>
           </Content>
         </Layout>
       </Layout>
