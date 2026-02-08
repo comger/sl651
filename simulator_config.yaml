@@ -1,0 +1,60 @@
+centers:
+  - addr: "localhost:8080"
+    id: 1
+  - addr: "120.79.72.98:9100"
+    id: 2
+devices:
+  - id: "1090330855"
+    password: "A000"
+    reports:
+      - type: "login"
+        interval: 60
+      - type: "periodic"
+        interval: 60
+      - type: "scheduled"
+        interval: 300
+      - type: "hourly"
+        interval: 3600
+    elements:
+      - tag: 0x39
+        name: "channel_1_water_level"
+        baseline: 15.5
+        strategy: "sine"
+        decimals: 3
+      - tag: 0x38
+        name: "battery_voltage"
+        baseline: 12.8
+        strategy: "static"
+        decimals: 2
+      - tag: 0x22
+        name: "rainfall"
+        baseline: 0.0
+        strategy: "incremental"
+        decimals: 1
+  - id: "1090330854"
+    password: "A000"
+    reports:
+      - type: "login"
+        interval: 60
+      - type: "periodic"
+        interval: 30
+      - type: "scheduled"
+        interval: 300
+      - type: "hourly"
+        interval: 3600
+    elements:
+      - tag: 0x39
+        name: "channel_1_water_level"
+        baseline: 19.5
+        strategy: "sine"
+        decimals: 3
+      - tag: 0x38
+        name: "battery_voltage"
+        baseline: 14.8
+        strategy: "static"
+        decimals: 2
+      - tag: 0x22
+        name: "rainfall"
+        baseline: 2.0
+        strategy: "incremental"
+        decimals: 1

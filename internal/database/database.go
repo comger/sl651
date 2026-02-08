@@ -1,6 +1,8 @@
 package database
 
 import (
+	"os"
+	"path/filepath"
 	"sl651-platform/internal/model"
 
 	"gorm.io/driver/sqlite"
@@ -8,6 +10,14 @@ import (
 )
 
 func Init(path string) (*gorm.DB, error) {
+	// Ensure directory exists
+	dir := filepath.Dir(path)
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return nil, err
+		}
+	}
+
 	db, err := gorm.Open(sqlite.Open(path), &gorm.Config{})
 	if err != nil {
 		return nil, err
@@ -23,5 +33,9 @@ func AutoMigrate(db *gorm.DB) error {
 		&model.ForwardRule{},
 		&model.ForwardLog{},
 		&model.StatusHistory{},
+		&model.FaultLog{},
+		&model.SystemLog{},
+		&model.QualityMetric{},
+		&model.DeviceCommand{},
 	)
 }

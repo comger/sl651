@@ -116,14 +116,16 @@ func (v DataPoints) Value() (driver.Value, error) {
 }
 
 type DeviceData struct {
-	ID        string      `json:"id" gorm:"primaryKey"`
-	DeviceID  string      `json:"device_id" gorm:"not null;index"`
-	Timestamp time.Time   `json:"timestamp" gorm:"not null;index"`
-	DataType  DataType    `json:"data_type" gorm:"not null"`
-	Values    DataPoints  `json:"values" gorm:"type:text"`
-	RawData   string      `json:"raw_data" gorm:"type:text"`
-	Quality   DataQuality `json:"quality" gorm:"not null"`
-	CreatedAt time.Time   `json:"created_at" gorm:"autoCreateTime"`
+	ID           string      `json:"id" gorm:"primaryKey"`
+	DeviceID     string      `json:"device_id" gorm:"not null;index"`
+	Timestamp    time.Time   `json:"timestamp" gorm:"not null;index"`
+	DataType     DataType    `json:"data_type" gorm:"not null"`
+	FunctionCode string      `json:"function_code" gorm:"not null;size:2"`
+	Values       DataPoints  `json:"values" gorm:"type:text"`
+	RawData      string      `json:"raw_data" gorm:"type:text"`
+	Quality      DataQuality `json:"quality" gorm:"not null"`
+	Direction    string      `json:"direction" gorm:"not null;default:uplink"`
+	CreatedAt    time.Time   `json:"created_at" gorm:"autoCreateTime"`
 }
 
 type DataPoint struct {
@@ -357,4 +359,74 @@ type StatusHistory struct {
 	DeviceID string       `json:"device_id" gorm:"index"`
 	Status   DeviceStatus `json:"status" gorm:"not null"`
 	Time     time.Time    `json:"time" gorm:"index"`
+}
+
+type Severity string
+
+const (
+	SeverityInfo     Severity = "info"
+	SeverityWarning  Severity = "warning"
+	SeverityError    Severity = "error"
+	SeverityCritical Severity = "critical"
+)
+
+type FaultType string
+
+const (
+	FaultTypeComm     FaultType = "communication"
+	FaultTypeData     FaultType = "data"
+	FaultTypeHardware FaultType = "hardware"
+)
+
+type FaultLog struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	DeviceID  string    `json:"device_id" gorm:"index"`
+	FaultCode string    `json:"fault_code" gorm:"index"` // Format: F-A-BB-CC
+	Type      FaultType `json:"type" gorm:"not null"`
+	Severity  Severity  `json:"severity" gorm:"not null"`
+	Message   string    `json:"message" gorm:"not null"`
+	Details   string    `json:"details"`
+	Time      time.Time `json:"time" gorm:"index"`
+	Resolved  bool      `json:"resolved" gorm:"default:false"`
+}
+
+type SystemLog struct {
+	ID      uint      `json:"id" gorm:"primaryKey"`
+	Level   string    `json:"level" gorm:"index"`
+	Source  string    `json:"source" gorm:"index"`
+	Message string    `json:"message"`
+	Time    time.Time `json:"time" gorm:"index"`
+}
+
+type QualityMetric struct {
+	ID           uint      `json:"id" gorm:"primaryKey"`
+	DeviceID     string    `json:"device_id" gorm:"index"`
+	Completeness float64   `json:"completeness"` // 0-100%
+	Latency      float64   `json:"latency"`      // Seconds
+	ErrorRate    float64   `json:"error_rate"`   // 0-100%
+	Jitter       float64   `json:"jitter"`       // Latency variation
+	Score        float64   `json:"score"`        // Comprehensive score 0-100
+	Time         time.Time `json:"time" gorm:"index"`
+}
+
+type CommandStatus string
+
+const (
+	CommandStatusPending CommandStatus = "pending"
+	CommandStatusSent    CommandStatus = "sent"
+	CommandStatusSuccess CommandStatus = "success"
+	CommandStatusFailed  CommandStatus = "failed"
+	CommandStatusTimeout CommandStatus = "timeout"
+)
+
+type DeviceCommand struct {
+	ID           string        `json:"id" gorm:"primaryKey"`
+	DeviceID     string        `json:"device_id" gorm:"index"`
+	FunctionCode string        `json:"function_code"`
+	Payload      string        `json:"payload"` // Hex string or JSON
+	Status       CommandStatus `json:"status" gorm:"index"`
+	Result       string        `json:"result"`
+	CreatedAt    time.Time     `json:"created_at" gorm:"autoCreateTime"`
+	SentAt       *time.Time    `json:"sent_at"`
+	UpdatedAt    time.Time     `json:"updated_at" gorm:"autoUpdateTime"`
 }
