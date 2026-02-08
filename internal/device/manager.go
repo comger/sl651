@@ -2,6 +2,7 @@ package device
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"sync"
@@ -121,13 +122,15 @@ func (dm *Manager) ProcessMessage(ctx context.Context, msg *sl651.Message) error
 	}
 
 	deviceData := &model.DeviceData{
-		ID:        dm.protocol.GenerateID(),
-		DeviceID:  msg.StationID,
-		Timestamp: msg.Timestamp,
-		DataType:  model.DataType(dm.protocol.GetDataType(msg.FunctionCode)),
-		Values:    make(model.DataPoints, 0),
-		RawData:   msg.RawData,
-		Quality:   model.QualityGood,
+		ID:           dm.protocol.GenerateID(),
+		DeviceID:     msg.StationID,
+		Timestamp:    msg.Timestamp,
+		DataType:     model.DataType(dm.protocol.GetDataType(msg.FunctionCode)),
+		FunctionCode: msg.FunctionCode,
+		Values:       make(model.DataPoints, 0),
+		RawData:      msg.RawData,
+		Quality:      model.QualityGood,
+		Direction:    "uplink",
 	}
 
 	for tag, value := range standardData {
@@ -156,6 +159,25 @@ func (dm *Manager) ProcessMessage(ctx context.Context, msg *sl651.Message) error
 	}
 
 	return nil
+}
+
+func (dm *Manager) LogDownlink(ctx context.Context, stationID string, functionCode byte, rawData []byte) {
+	deviceData := &model.DeviceData{
+		ID:           dm.protocol.GenerateID(),
+		DeviceID:     stationID,
+		Timestamp:    time.Now(),
+		DataType:     model.DataTypeRealtime,
+		FunctionCode: fmt.Sprintf("%02X", functionCode),
+		Values:       make(model.DataPoints, 0),
+		RawData:      hex.EncodeToString(rawData),
+		Quality:      model.QualityGood,
+		Direction:    "downlink",
+	}
+
+	select {
+	case dm.dataChan <- deviceData:
+	case <-ctx.Done():
+	}
 }
 
 func (dm *Manager) GetDataChannel() <-chan *model.DeviceData {

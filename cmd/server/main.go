@@ -134,8 +134,9 @@ func (s *TCPServer) handleConnection(ctx context.Context, conn net.Conn) {
 
 	// Standard Report Acknowledgment
 	// In SL651, the response usually has the same function code as the request
-	response, _ := s.protocol.BuildMessage(msg.StationID, msg.FunctionCodeByte, nil)
+	response, _ := s.protocol.BuildMessage(msg.StationID, msg.Password, msg.CenterAddr, msg.FunctionCodeByte, nil)
 	conn.Write(response)
+	s.deviceManager.LogDownlink(ctx, msg.StationID, msg.FunctionCodeByte, response)
 
 	// Check for pending downlink commands
 	pendingCmd := s.controlManager.PopPending(ctx, msg.StationID)
@@ -143,6 +144,12 @@ func (s *TCPServer) handleConnection(ctx context.Context, conn net.Conn) {
 		cmdFrame, err := s.controlManager.BuildCommandFrame(pendingCmd)
 		if err == nil {
 			conn.Write(cmdFrame)
+			// Extract function code from frame if possible, or use a placeholder if not easily accessible here
+			// For downlink commands, we can try to parse from frame or pass it from manager
+			// Let's assume 0x40-0x4F for now or parse from cmdFrame if needed.
+			// Actually, BuildCommandFrame likely knows the code.
+			// For simplicity, use a placeholder or extract from cmdFrame[10]
+			s.deviceManager.LogDownlink(ctx, msg.StationID, cmdFrame[10], cmdFrame)
 			log.Printf("Sent downlink command %s to device %s: %x", pendingCmd.ID, msg.StationID, cmdFrame)
 		} else {
 			log.Printf("Failed to build command frame for %s: %v", pendingCmd.ID, err)

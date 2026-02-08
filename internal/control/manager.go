@@ -138,7 +138,7 @@ func (m *Manager) BuildCommandFrame(cmd *model.DeviceCommand) ([]byte, error) {
 		return nil, fmt.Errorf("failed to decode payload: %w", err)
 	}
 
-	return m.protocol.BuildMessage(cmd.DeviceID, fCode[0], body)
+	return m.protocol.BuildMessage(cmd.DeviceID, "0000", 0x01, fCode[0], body)
 }
 
 func (m *Manager) GetHistory(ctx context.Context, deviceID string, limit int) ([]*model.DeviceCommand, error) {

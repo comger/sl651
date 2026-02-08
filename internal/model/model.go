@@ -116,14 +116,16 @@ func (v DataPoints) Value() (driver.Value, error) {
 }
 
 type DeviceData struct {
-	ID        string      `json:"id" gorm:"primaryKey"`
-	DeviceID  string      `json:"device_id" gorm:"not null;index"`
-	Timestamp time.Time   `json:"timestamp" gorm:"not null;index"`
-	DataType  DataType    `json:"data_type" gorm:"not null"`
-	Values    DataPoints  `json:"values" gorm:"type:text"`
-	RawData   string      `json:"raw_data" gorm:"type:text"`
-	Quality   DataQuality `json:"quality" gorm:"not null"`
-	CreatedAt time.Time   `json:"created_at" gorm:"autoCreateTime"`
+	ID           string      `json:"id" gorm:"primaryKey"`
+	DeviceID     string      `json:"device_id" gorm:"not null;index"`
+	Timestamp    time.Time   `json:"timestamp" gorm:"not null;index"`
+	DataType     DataType    `json:"data_type" gorm:"not null"`
+	FunctionCode string      `json:"function_code" gorm:"not null;size:2"`
+	Values       DataPoints  `json:"values" gorm:"type:text"`
+	RawData      string      `json:"raw_data" gorm:"type:text"`
+	Quality      DataQuality `json:"quality" gorm:"not null"`
+	Direction    string      `json:"direction" gorm:"not null;default:uplink"`
+	CreatedAt    time.Time   `json:"created_at" gorm:"autoCreateTime"`
 }
 
 type DataPoint struct {

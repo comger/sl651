@@ -3,6 +3,7 @@ import { Layout, Table, Checkbox, Card, Typography, Space, Tag, theme, Divider, 
 import { DatabaseOutlined, HddOutlined, SyncOutlined, SettingOutlined, DashboardOutlined, HistoryOutlined, AlertOutlined, SafetyCertificateOutlined, BugOutlined, ProfileOutlined, SignalFilled, ControlOutlined, SendOutlined, ReadOutlined } from '@ant-design/icons';
 import axios from 'axios';
 import moment from 'moment';
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as ChartTooltip, Legend } from 'recharts';
 
 const { Header, Content, Sider } = Layout;
 const { Title, Text } = Typography;
@@ -11,6 +12,112 @@ const { Title, Text } = Typography;
 const api = axios.create({
   baseURL: 'http://127.0.0.1:8085/api/v1',
 });
+
+const MonitoringCharts = ({ data, span = 12 }) => {
+  if (!data || data.length === 0) return null;
+
+  const keyMapping = {
+    'water_level': '水位',
+    'voltage': '电压',
+    'cumulative_flow': '累计流量',
+    'total_rainfall': '总雨量',
+    'rainfall': '雨量',
+    'instant_flow': '瞬时流量',
+    'hourly_rainfall': '小时雨量',
+    'day_rainfall': '日雨量',
+    'period_rainfall': '时段雨量',
+    'extra_rainfall': '额外雨量',
+  };
+
+  // Reverse data to show chronological order (left to right)
+  const sortedData = [...data].reverse();
+
+  // Pick some colors for multiple devices
+  const colors = ['#1890ff', '#52c41a', '#faad14', '#f5222d', '#722ed1', '#13c2c2', '#eb2f96'];
+
+  // Extract all unique meaningful tags
+  const allTags = new Set();
+  sortedData.forEach(item => {
+    if (Array.isArray(item.values)) {
+      item.values.forEach(v => {
+        const metadataTags = ['station_id', 'send_time', 'body_station_id', 'station_class', 'observation_time', 'serial', 'function_code', 'timestamp'];
+        if (!metadataTags.includes(v.tag)) {
+          allTags.add(v.tag);
+        }
+      });
+    }
+  });
+
+  const deviceIds = Array.from(new Set(sortedData.map(d => d.device_id)));
+
+  // Transform data for line charts: Array of { time, [deviceId1_tag]: val, [deviceId2_tag]: val, ... }
+  // To keep it simple and handle timestamps correctly, we group by time
+  const timeBuckets = {};
+  sortedData.forEach(item => {
+    const timeStr = moment(item.timestamp).format('HH:mm:ss');
+    if (!timeBuckets[timeStr]) {
+      timeBuckets[timeStr] = { time: timeStr };
+    }
+    if (Array.isArray(item.values)) {
+      item.values.forEach(v => {
+        const val = v.value.float ?? v.value.int;
+        if (typeof val === 'number') {
+          // Use deviceId as prefix for multi-line support on same tag
+          timeBuckets[timeStr][`${item.device_id}_${v.tag}`] = val;
+        }
+      });
+    }
+  });
+
+  const chartData = Object.values(timeBuckets).sort((a, b) => a.time.localeCompare(b.time));
+
+  return (
+    <Row gutter={[16, 16]} style={{ marginBottom: sortedData.length > 0 ? '20px' : '0' }}>
+      {Array.from(allTags).map(tag => (
+        <Col span={span} key={tag}>
+          <Card title={`${keyMapping[tag] || tag} 实时趋势`} size="small" bordered={false} style={{ borderRadius: '8px' }}>
+            <div style={{ width: '100%', height: 180 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                  <XAxis
+                    dataKey="time"
+                    fontSize={10}
+                    tick={{ fill: '#8c8c8c' }}
+                    axisLine={{ stroke: '#f0f0f0' }}
+                  />
+                  <YAxis
+                    fontSize={10}
+                    tick={{ fill: '#8c8c8c' }}
+                    axisLine={{ stroke: '#f0f0f0' }}
+                    domain={['auto', 'auto']}
+                  />
+                  <ChartTooltip
+                    contentStyle={{ borderRadius: '4px', border: 'none', boxShadow: '0 2px 8px rgba(0,0,0,0.15)', fontSize: '11px' }}
+                  />
+                  <Legend verticalAlign="top" height={24} iconType="circle" wrapperStyle={{ fontSize: '10px' }} />
+                  {deviceIds.map((devId, idx) => (
+                    <Line
+                      key={`${devId}_${tag}`}
+                      type="monotone"
+                      dataKey={`${devId}_${tag}`}
+                      name={`设备 ${devId}`}
+                      stroke={colors[idx % colors.length]}
+                      strokeWidth={2}
+                      dot={false}
+                      activeDot={{ r: 4 }}
+                      connectNulls={true}
+                    />
+                  ))}
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
+        </Col>
+      ))}
+    </Row>
+  );
+};
 
 const App = () => {
   const [devices, setDevices] = useState([]);
@@ -32,6 +139,7 @@ const App = () => {
   const [isTrendDrawerOpen, setIsTrendDrawerOpen] = useState(false);
   const [trendData, setTrendData] = useState([]);
   const [activeTab, setActiveTab] = useState('monitoring');
+  const [showLogs, setShowLogs] = useState(true);
   const [configLoading, setConfigLoading] = useState(false);
   const [controlHistory, setControlHistory] = useState([]);
   const [executingCmd, setExecutingCmd] = useState(false);
@@ -297,77 +405,69 @@ const App = () => {
 
   const columns = [
     {
-      title: '采集时间',
-      dataIndex: 'values',
-      key: 'send_time',
-      width: 180,
-      render: (values) => {
-        if (!Array.isArray(values)) return '-';
-        const sendTime = values.find(v => v.tag === 'send_time');
-        return sendTime && sendTime.value && sendTime.value.string ? sendTime.value.string : '-';
-      },
-    },
-    {
-      title: '入库时间',
-      dataIndex: 'timestamp',
-      key: 'timestamp',
-      width: 180,
-      render: (text) => moment(text).format('YYYY-MM-DD HH:mm:ss'),
-    },
-    {
-      title: '设备站码',
-      dataIndex: 'device_id',
-      key: 'device_id',
-      width: 120,
-      render: (text) => <Tag color="var(--ant-primary-color)">{text}</Tag>,
-    },
-    {
-      title: '报文内容 & 解析结果',
+      title: '报文数据监测 (原始 \u0026 解析)',
       key: 'content',
       render: (_, record) => {
-        // Prepare Raw Data
         const rawText = record.raw_data || '-';
+        const values = record.values || [];
 
-        // Prepare Parsed Data
-        const values = record.values;
-        let parsedTags = null;
-        if (Array.isArray(values)) {
-          const keyMapping = {
-            'water_level': '水位',
-            'voltage': '电压',
-            'cumulative_flow': '累计流量',
-            'total_rainfall': '总雨量',
-            'rainfall': '雨量',
-            'instant_flow': '瞬时流量',
-            'hourly_rainfall': '小时雨量',
-            'day_rainfall': '日雨量',
-            'period_rainfall': '时段雨量',
-            'extra_rainfall': '额外雨量',
-          };
-          parsedTags = (
-            <Space size={[4, 4]} wrap style={{ marginTop: 8 }}>
-              {values.map((kp, index) => {
-                const label = keyMapping[kp.tag] || kp.tag;
-                if (kp.tag === 'station_id' || kp.tag === 'send_time') return null;
-                if (!kp.value) return null;
+        // Extract metadata for the sub-line
+        const sendTimeObj = values.find(v => v.tag === 'send_time');
+        const sendTime = sendTimeObj && sendTimeObj.value && sendTimeObj.value.string ? sendTimeObj.value.string : '-';
+        const storeTime = moment(record.timestamp).format('MM-DD HH:mm:ss');
 
-                let val = kp.value.float ?? kp.value.int ?? kp.value.string ?? kp.value.bool;
-                if (typeof val === 'number' && !Number.isInteger(val)) {
-                  val = val.toFixed(3);
-                }
-                return (
-                  <Tag key={index} color="blue" style={{ margin: 0, fontSize: '12px' }}>
-                    {label}: {val}
-                  </Tag>
-                );
-              })}
-            </Space>
-          );
-        }
+        const keyMapping = {
+          'water_level': '水位',
+          'voltage': '电压',
+          'cumulative_flow': '累计流量',
+          'total_rainfall': '总雨量',
+          'rainfall': '雨量',
+          'instant_flow': '瞬时流量',
+          'hourly_rainfall': '小时雨量',
+          'day_rainfall': '日雨量',
+          'period_rainfall': '时段雨量',
+          'extra_rainfall': '额外雨量',
+        };
+
+        const parsedTags = (
+          <Space size={[4, 4]} wrap style={{ marginTop: 4 }}>
+            {values.map((kp, index) => {
+              const label = keyMapping[kp.tag] || kp.tag;
+              if (['station_id', 'send_time', 'body_station_id', 'station_class', 'observation_time', 'serial', 'function_code', 'timestamp'].includes(kp.tag)) return null;
+              if (!kp.value) return null;
+
+              let val = kp.value.float ?? kp.value.int ?? kp.value.string ?? kp.value.bool;
+              if (typeof val === 'number' && !Number.isInteger(val)) {
+                val = val.toFixed(3);
+              }
+              return (
+                <Tag key={index} color="processing" style={{ margin: 0, fontSize: '11px', borderRadius: '2px' }}>
+                  {label}: {val}
+                </Tag>
+              );
+            })}
+          </Space>
+        );
 
         return (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
-            <Text code copyable style={{ maxWidth: '100%', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{rawText}</Text>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', padding: '4px 0' }}>
+            <Text code copyable style={{ fontSize: '12px', whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: '#10239e' }}>
+              {rawText}
+            </Text>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', color: '#8c8c8c' }}>
+              <Tag size="small" color="blue" style={{ margin: 0, fontSize: '10px' }}>{record.device_id}</Tag>
+              <Tag size="small" color={record.direction === 'downlink' ? 'orange' : 'green'} style={{ margin: 0, fontSize: '10px' }}>
+                {record.direction === 'downlink' ? '下行' : '上行'}
+              </Tag>
+              {record.function_code && (
+                <Tag size="small" color="purple" style={{ margin: 0, fontSize: '10px' }}>
+                  FC: {record.function_code}
+                </Tag>
+              )}
+              <span>采集: {sendTime}</span>
+              <Divider type="vertical" style={{ margin: 0 }} />
+              <span>入库: {storeTime}</span>
+            </div>
             {parsedTags}
           </div>
         );
@@ -497,68 +597,55 @@ const App = () => {
                   </Col>
                 </Row>
 
-                <Card
-                  bordered={false}
-                  style={{ borderRadius: borderRadiusLG, boxShadow: '0 1px 2px 0 rgba(0,0,0,0.03)', flex: 1, display: 'flex', flexDirection: 'column' }}
-                  bodyStyle={{ padding: '0', flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
-                >
-                  <div style={{ padding: '16px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Space>
-                      <SyncOutlined spin={loading} />
-                      <Title level={5} style={{ margin: 0 }}>实时报文</Title>
-                      {selectedStationIDs.length > 0 ? <Tag color="processing">已选: {selectedStationIDs.length}</Tag> : <Tag>全部</Tag>}
-                    </Space>
-                    <Space size="large">
-                      <Space>
-                        <Text secondary style={{ fontSize: '12px' }}>条数:</Text>
-                        <input
-                          type="range"
-                          min="10"
-                          max="100"
-                          value={limit}
-                          onChange={(e) => setLimit(parseInt(e.target.value))}
-                          style={{ width: '80px' }}
+                <Row gutter={[16, 16]} style={{ flex: 1, overflow: 'hidden' }}>
+                  <Col span={showLogs ? 14 : 24} style={{ height: '100%', overflowY: 'auto', paddingRight: showLogs ? '8px' : '0' }}>
+                    <MonitoringCharts data={data} span={showLogs ? 24 : 12} />
+                  </Col>
+
+                  {showLogs && (
+                    <Col span={10} style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+                      <Card
+                        bordered={false}
+                        style={{ borderRadius: borderRadiusLG, boxShadow: '0 1px 2px 0 rgba(0,0,0,0.03)', flex: 1, display: 'flex', flexDirection: 'column' }}
+                        bodyStyle={{ padding: '0', flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
+                      >
+                        <div style={{ padding: '12px 16px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <Space>
+                            <SyncOutlined spin={loading} />
+                            <Title level={5} style={{ margin: 0, fontSize: '14px' }}>实时报文日志</Title>
+                          </Space>
+                          <Space>
+                            <Tooltip title="隐藏日志">
+                              <Button type="text" size="small" icon={<ProfileOutlined />} onClick={() => setShowLogs(false)} />
+                            </Tooltip>
+                          </Space>
+                        </div>
+                        <Table
+                          columns={columns}
+                          dataSource={data}
+                          rowKey="id"
+                          pagination={false}
+                          size="small"
+                          style={{ flex: 1 }}
+                          scroll={{ y: 'calc(100vh - 380px)' }}
                         />
-                        <Tag style={{ margin: 0 }}>{limit}</Tag>
-                      </Space>
-                      <Space>
-                        <Text secondary style={{ fontSize: '12px' }}>频率:</Text>
-                        <select
-                          value={refreshInterval}
-                          onChange={(e) => setRefreshInterval(parseInt(e.target.value))}
-                          style={{ padding: '2px 4px', borderRadius: '4px', border: '1px solid #d9d9d9', fontSize: '12px' }}
-                        >
-                          <option value={5}>5s</option>
-                          <option value={10}>10s</option>
-                          <option value={30}>30s</option>
-                        </select>
-                      </Space>
-                      <Tooltip title="查看运行轨迹">
-                        <Button
-                          type="text"
-                          icon={<HistoryOutlined />}
-                          onClick={openTrendDrawer}
-                        />
-                      </Tooltip>
-                      <Tooltip title="心跳管理配置">
-                        <Button
-                          type="text"
-                          icon={<SettingOutlined />}
-                          onClick={() => setIsConfigModalOpen(true)}
-                        />
-                      </Tooltip>
-                    </Space>
+                      </Card>
+                    </Col>
+                  )}
+                </Row>
+
+                {!showLogs && (
+                  <div style={{ position: 'fixed', right: '40px', bottom: '40px', zIndex: 100 }}>
+                    <Button
+                      type="primary"
+                      shape="circle"
+                      size="large"
+                      icon={<ProfileOutlined />}
+                      onClick={() => setShowLogs(true)}
+                      style={{ boxShadow: '0 4px 12px rgba(0,0,0,0.15)' }}
+                    />
                   </div>
-                  <Table
-                    columns={columns}
-                    dataSource={data}
-                    rowKey="id"
-                    pagination={false}
-                    size="middle"
-                    style={{ flex: 1 }}
-                    scroll={{ y: 'calc(100vh - 360px)' }}
-                  />
-                </Card>
+                )}
               </>
             )}
             {activeTab === 'diagnosis' && (

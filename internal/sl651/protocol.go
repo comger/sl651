@@ -18,6 +18,8 @@ func NewProtocol() *Protocol {
 
 type Message struct {
 	StationID        string
+	Password         string
+	CenterAddr       byte
 	FunctionCode     string
 	FunctionCodeByte byte
 	Direction        string
@@ -53,6 +55,7 @@ func (p *Protocol) Parse(hexData string) (*Message, error) {
 	}
 	msg := &Message{}
 	msg.RawData = hexData
+	msg.CenterAddr = data[2]
 
 	// Determine Station ID range
 	// Standard is data[3:8], but if it's mangled ASCII, it might be longer or start differently
@@ -64,6 +67,7 @@ func (p *Protocol) Parse(hexData string) (*Message, error) {
 	}
 
 	msg.StationID = stationID
+	msg.Password = hex.EncodeToString(data[8:10])
 	msg.FunctionCode = fmt.Sprintf("%02X", data[10])
 	msg.FunctionCodeByte = data[10]
 	flagLen := int(data[11])<<8 | int(data[12])
@@ -176,9 +180,9 @@ func encodeIntToBCD(val int64, length int) []byte {
 	return res
 }
 
-func (p *Protocol) BuildMessage(stationID string, functionCode byte, bodyElements []byte) ([]byte, error) {
+func (p *Protocol) BuildMessage(stationID string, password string, centerAddr byte, functionCode byte, bodyElements []byte) ([]byte, error) {
 	frame := make([]byte, 0, 256)
-	frame = append(frame, 0x7e, 0x7e, 0x01)
+	frame = append(frame, 0x7e, 0x7e, centerAddr)
 	addr, _ := hex.DecodeString(stationID)
 	if len(addr) < 5 {
 		padded := make([]byte, 5)
@@ -188,7 +192,17 @@ func (p *Protocol) BuildMessage(stationID string, functionCode byte, bodyElement
 		addr = addr[len(addr)-5:]
 	}
 	frame = append(frame, addr...)
-	frame = append(frame, 0xa0, 0x00) // Password
+
+	// Password (2 bytes)
+	pwd, _ := hex.DecodeString(password)
+	if len(pwd) < 2 {
+		padded := make([]byte, 2)
+		copy(padded[2-len(pwd):], pwd)
+		pwd = padded
+	} else {
+		pwd = pwd[len(pwd)-2:]
+	}
+	frame = append(frame, pwd...)
 	frame = append(frame, functionCode)
 
 	serial := uint16(rand.Intn(65535))
