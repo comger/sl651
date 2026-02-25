@@ -1,0 +1,70 @@
+server_addr: 120.79.72.98:9100
+devices:
+    - id: "1090330854"
+      name: 标准水文站
+      password: A000
+      interval_seconds: 60
+      heartbeat_enabled: true
+      login_enabled: true
+      hour_report_enabled: true
+      channels:
+        - tag: 57
+          name: 水位
+          decimals: 3
+          algorithm:
+            type: sin
+            base: 15
+            min: 14
+            max: 16
+            step: 0
+            scale: 3600
+        - tag: 56
+          name: 电压
+          decimals: 2
+          algorithm:
+            type: random
+            base: 12.5
+            min: 12
+            max: 13
+            step: 0
+            scale: 0
+        - tag: 34
+          name: 雨量
+          decimals: 1
+          algorithm:
+            type: step
+            base: 9
+            min: 0
+            max: 0
+            step: 0.5
+            scale: 0
+        - tag: 55
+          name: 流量
+          decimals: 3
+          algorithm:
+            type: constant
+            base: 123.456
+            min: 0
+            max: 0
+            step: 0
+            scale: 0
+        - tag: 48
+          name: 累计流量
+          decimals: 3
+          algorithm:
+            type: step
+            base: 1189
+            min: 0
+            max: 0
+            step: 10.5
+            scale: 0
+        - tag: 38
+          name: 1小时采集雨量
+          decimals: 1
+          algorithm:
+            type: random
+            base: 0.5
+            min: 0
+            max: 5
+            step: 0
+            scale: 0
