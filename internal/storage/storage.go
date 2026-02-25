@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"sl651-platform/internal/model"
@@ -70,7 +71,8 @@ func (s *Storage) GetDeviceData(ctx context.Context, deviceID string, limit int,
 
 func (s *Storage) GetAllDeviceData(ctx context.Context, stationIDs []string, limit int, offset int) ([]*model.DeviceData, error) {
 	var data []*model.DeviceData
-	query := s.db.WithContext(ctx).Order("timestamp DESC")
+	db := s.db.WithContext(ctx).Debug() // Enable Debug for this call
+	query := db.Order("timestamp DESC")
 
 	if len(stationIDs) > 0 {
 		query = query.Where("device_id IN ?", stationIDs)
@@ -84,9 +86,7 @@ func (s *Storage) GetAllDeviceData(ctx context.Context, stationIDs []string, lim
 	}
 
 	err := query.Find(&data).Error
-	if err != nil {
-		return nil, err
-	}
+	log.Printf("[STORAGE DEBUG] GetAllDeviceData query IDs: %v, found: %d, err: %v", stationIDs, len(data), err)
 	return data, nil
 }
 
@@ -182,9 +182,20 @@ func (s *Storage) SaveForwardLog(ctx context.Context, log *model.ForwardLog) err
 	return s.db.WithContext(ctx).Save(log).Error
 }
 
-func (s *Storage) GetForwardLogs(ctx context.Context, ruleID string, limit int, offset int) ([]*model.ForwardLog, error) {
+func (s *Storage) GetForwardLogs(ctx context.Context, ruleID, deviceID, status string, limit int, offset int) ([]*model.ForwardLog, error) {
 	var logs []*model.ForwardLog
-	query := s.db.WithContext(ctx).Where("rule_id = ?", ruleID).Order("created_at DESC")
+	query := s.db.WithContext(ctx).Order("created_at DESC")
+
+	if ruleID != "" {
+		query = query.Where("rule_id = ?", ruleID)
+	}
+	if deviceID != "" {
+		query = query.Where("device_id = ?", deviceID)
+	}
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+
 	if limit > 0 {
 		query = query.Limit(limit)
 	}

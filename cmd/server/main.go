@@ -204,7 +204,7 @@ func main() {
 		log.Printf("Failed to start control manager: %v", err)
 	}
 
-	tcpServer := NewTCPServer(":8080", protocol, deviceManager, forwardService, diagnosisManager, qualityManager, controlManager)
+	tcpServer := NewTCPServer(fmt.Sprintf(":%d", cfg.Server.Port), protocol, deviceManager, forwardService, diagnosisManager, qualityManager, controlManager)
 	go func() {
 		if err := tcpServer.Start(ctx); err != nil {
 			log.Printf("TCP server error: %v", err)
@@ -217,6 +217,11 @@ func main() {
 
 	go func() {
 		for data := range deviceManager.GetDataChannel() {
+			// Ensure data is saved to database FIRST
+			if err := storage.SaveDeviceData(ctx, data); err != nil {
+				log.Printf("Failed to save device data: %v", err)
+			}
+			// THEN forward it to the forwarding service
 			forwardService.GetDataChannel() <- data
 		}
 	}()

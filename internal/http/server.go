@@ -166,6 +166,16 @@ func (s *Server) setupRoutes() {
 			diagnosis.GET("/control/history", s.getControlHistory)
 		}
 
+		forwarding := api.Group("/forwarding")
+		{
+			forwarding.GET("/rules", s.listForwardRules)
+			forwarding.POST("/rules", s.createForwardRule)
+			forwarding.GET("/rules/:id", s.getForwardRule)
+			forwarding.PUT("/rules/:id", s.updateForwardRule)
+			forwarding.DELETE("/rules/:id", s.deleteForwardRule)
+			forwarding.GET("/logs", s.getForwardingLogs)
+		}
+
 		health := api.Group("/health")
 		{
 			health.GET("", s.healthCheck)
@@ -231,7 +241,9 @@ func (s *Server) getGlobalDeviceData(c *gin.Context) {
 		stationIDs = strings.Split(ids, ",")
 	}
 
-	if len(stationIDs) == 0 {
+	log.Printf("[API DEBUG] stationIDs: %v, query ids: %s", stationIDs, c.Query("station_ids"))
+
+	if len(stationIDs) == 0 || (len(stationIDs) == 1 && stationIDs[0] == "") {
 		c.JSON(http.StatusOK, gin.H{
 			"code":      0,
 			"message":   "success",
@@ -252,7 +264,7 @@ func (s *Server) getGlobalDeviceData(c *gin.Context) {
 		return
 	}
 
-	log.Printf("[API] getGlobalDeviceData found %d records", len(data))
+	log.Printf("[API DEBUG] getGlobalDeviceData found %d records for IDs: %v", len(data), stationIDs)
 
 	c.JSON(http.StatusOK, gin.H{
 		"code":      0,
@@ -866,5 +878,94 @@ func (s *Server) getControlHistory(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"code": 0,
 		"data": cmds,
+	})
+}
+func (s *Server) listForwardRules(c *gin.Context) {
+	tenantID := c.Query("tenant_id")
+	rules, err := s.forwardService.ListForwardRules(c.Request.Context(), tenantID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"code": 0, "data": rules})
+}
+
+func (s *Server) createForwardRule(c *gin.Context) {
+	var rule model.ForwardRule
+	if err := c.ShouldBindJSON(&rule); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": err.Error()})
+		return
+	}
+	if rule.ID == "" {
+		rule.ID = fmt.Sprintf("rule_%d", time.Now().UnixNano())
+	}
+	if err := s.forwardService.CreateForwardRule(c.Request.Context(), &rule); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"code": 0, "data": rule})
+}
+
+func (s *Server) getForwardRule(c *gin.Context) {
+	id := c.Param("id")
+	rule, err := s.forwardService.GetForwardRule(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"code": 404, "message": "Rule not found"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"code": 0, "data": rule})
+}
+
+func (s *Server) updateForwardRule(c *gin.Context) {
+	id := c.Param("id")
+	var rule model.ForwardRule
+	if err := c.ShouldBindJSON(&rule); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": err.Error()})
+		return
+	}
+	rule.ID = id
+	if err := s.forwardService.UpdateForwardRule(c.Request.Context(), &rule); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"code": 0, "data": rule})
+}
+
+func (s *Server) deleteForwardRule(c *gin.Context) {
+	id := c.Param("id")
+	if err := s.forwardService.DeleteForwardRule(c.Request.Context(), id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"code": 0, "message": "deleted"})
+}
+
+func (s *Server) getForwardingLogs(c *gin.Context) {
+	ruleID := c.Query("rule_id")
+	deviceID := c.Query("device_id")
+	status := c.Query("status")
+	limit := 50
+	offset := 0
+
+	if limitStr := c.Query("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+	if offsetStr := c.Query("offset"); offsetStr != "" {
+		if o, err := strconv.Atoi(offsetStr); err == nil && o >= 0 {
+			offset = o
+		}
+	}
+
+	logs, err := s.forwardService.GetForwardLogs(c.Request.Context(), ruleID, deviceID, status, limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 0,
+		"data": logs,
 	})
 }

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"sl651-platform/internal/forward/adapters"
 	"sl651-platform/internal/model"
 	"sl651-platform/internal/storage"
 )
@@ -22,15 +23,29 @@ type Service struct {
 	rules      map[string]*model.ForwardRule
 	rulesMutex sync.RWMutex
 	workers    int
+	adapters   map[model.DestType]adapters.DestinationAdapter
+	ruleEngine *RuleEngine
 }
 
 func NewService(storage *storage.Storage) *Service {
-	return &Service{
-		storage:  storage,
-		dataChan: make(chan *model.DeviceData, 10000),
-		rules:    make(map[string]*model.ForwardRule),
-		workers:  4,
+	svc := &Service{
+		storage:    storage,
+		dataChan:   make(chan *model.DeviceData, 10000),
+		rules:      make(map[string]*model.ForwardRule),
+		workers:    4,
+		adapters:   make(map[model.DestType]adapters.DestinationAdapter),
+		ruleEngine: NewRuleEngine(),
 	}
+
+	// Initialize adapters
+	svc.adapters[model.DestTypeMqtt] = adapters.NewMQTTAdapter()
+	sqlAdapter := adapters.NewSQLAdapter()
+	svc.adapters[model.DestTypeDatabase] = sqlAdapter
+	svc.adapters[model.DestTypeMySQL] = sqlAdapter
+	svc.adapters[model.DestTypePostgres] = sqlAdapter
+	svc.adapters[model.DestTypeSqlite] = sqlAdapter
+
+	return svc
 }
 
 func (fs *Service) Start(ctx context.Context) {
@@ -96,56 +111,47 @@ func (fs *Service) processData(ctx context.Context, data *model.DeviceData, work
 
 	for _, rule := range fs.rules {
 		if fs.shouldForward(rule, data) {
-			if err := fs.forwardData(ctx, rule, data); err != nil {
-				log.Printf("Worker %d: Failed to forward data: %v", workerID, err)
-				fs.logForwardResult(ctx, rule.ID, data.ID, "failed", err.Error(), 0)
-			} else {
-				fs.logForwardResult(ctx, rule.ID, data.ID, "success", "", 0)
+			// Support multiple destinations
+			for _, dest := range rule.Destinations {
+				// Forward to each destination potentially in parallel or sequence
+				// Here we use a goroutine for each destination to ensure multi-center support doesn't block
+				go func(d model.Destination, r *model.ForwardRule) {
+					// Transform data for logging and potential delivery
+					payload := fs.transformData(r, data)
+					payloadBytes, _ := json.Marshal(payload)
+					payloadStr := string(payloadBytes)
+
+					if err := fs.forwardToDest(ctx, r, data, d); err != nil {
+						log.Printf("Worker %d: Failed to forward data to %s: %v", workerID, d.DestType, err)
+						fs.logForwardResult(ctx, r.ID, data.DeviceID, data.ID, "failed", string(d.DestType), d.URL, payloadStr, err.Error(), 0)
+					} else {
+						fs.logForwardResult(ctx, r.ID, data.DeviceID, data.ID, "success", string(d.DestType), d.URL, payloadStr, "", 0)
+					}
+				}(dest, rule)
 			}
 		}
 	}
+}
+
+func (fs *Service) forwardToDest(ctx context.Context, rule *model.ForwardRule, data *model.DeviceData, dest model.Destination) error {
+	adapter, ok := fs.adapters[dest.DestType]
+	if ok {
+		return adapter.Send(ctx, data, dest)
+	}
+
+	// Fallback to legacy HTTP if it's HTTP
+	if dest.DestType == model.DestTypeHttp {
+		return fs.forwardHTTP(ctx, rule, data, dest)
+	}
+
+	return fmt.Errorf("no adapter for destination type: %s", dest.DestType)
 }
 
 func (fs *Service) shouldForward(rule *model.ForwardRule, data *model.DeviceData) bool {
-	if len(rule.Filter.DeviceIDs) > 0 {
-		found := false
-		for _, deviceID := range rule.Filter.DeviceIDs {
-			if deviceID == data.DeviceID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-
-	if len(rule.Filter.DataTypes) > 0 {
-		found := false
-		for _, dataType := range rule.Filter.DataTypes {
-			if dataType == data.DataType {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-
-	return true
+	return fs.ruleEngine.Match(rule, data)
 }
 
-func (fs *Service) forwardData(ctx context.Context, rule *model.ForwardRule, data *model.DeviceData) error {
-	switch rule.Destination.DestType {
-	case model.DestTypeHttp:
-		return fs.forwardHTTP(ctx, rule, data)
-	default:
-		return fmt.Errorf("unsupported destination type: %s", rule.Destination.DestType)
-	}
-}
-
-func (fs *Service) forwardHTTP(ctx context.Context, rule *model.ForwardRule, data *model.DeviceData) error {
+func (fs *Service) forwardHTTP(ctx context.Context, rule *model.ForwardRule, data *model.DeviceData, dest model.Destination) error {
 	payload := fs.transformData(rule, data)
 
 	jsonData, err := json.Marshal(payload)
@@ -153,14 +159,14 @@ func (fs *Service) forwardHTTP(ctx context.Context, rule *model.ForwardRule, dat
 		return fmt.Errorf("failed to marshal data: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", rule.Destination.URL, bytes.NewBuffer(jsonData))
+	req, err := http.NewRequestWithContext(ctx, "POST", dest.URL, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
 
-	for _, header := range rule.Destination.Headers {
+	for _, header := range dest.Headers {
 		for k, v := range header {
 			req.Header.Set(k, v)
 		}
@@ -273,15 +279,19 @@ func (fs *Service) applyTemplate(template string, data map[string]interface{}) s
 	return result
 }
 
-func (fs *Service) logForwardResult(ctx context.Context, ruleID, dataID, status, errorMessage string, retryCount int) {
+func (fs *Service) logForwardResult(ctx context.Context, ruleID, deviceID, dataID, status, targetType, destURL, payload, errorMessage string, retryCount int) {
 	forwardLog := &model.ForwardLog{
-		ID:           fmt.Sprintf("%d", time.Now().UnixNano()),
-		RuleID:       ruleID,
-		DeviceID:     "",
-		DataID:       dataID,
-		Status:       status,
-		ErrorMessage: errorMessage,
-		RetryCount:   retryCount,
+		ID:             fmt.Sprintf("%d", time.Now().UnixNano()),
+		RuleID:         ruleID,
+		DeviceID:       deviceID,
+		DataID:         dataID,
+		Status:         status,
+		TargetType:     targetType,
+		DestinationURL: destURL,
+		Payload:        payload,
+		ErrorMessage:   errorMessage,
+		RetryCount:     retryCount,
+		CreatedAt:      time.Now(),
 	}
 
 	if err := fs.storage.SaveForwardLog(ctx, forwardLog); err != nil {
@@ -291,6 +301,38 @@ func (fs *Service) logForwardResult(ctx context.Context, ruleID, dataID, status,
 
 func (fs *Service) GetDataChannel() chan *model.DeviceData {
 	return fs.dataChan
+}
+
+func (fs *Service) ListForwardRules(ctx context.Context, tenantID string) ([]*model.ForwardRule, error) {
+	return fs.storage.ListForwardRules(ctx, tenantID)
+}
+
+func (fs *Service) GetForwardRule(ctx context.Context, id string) (*model.ForwardRule, error) {
+	return fs.storage.GetForwardRule(ctx, id)
+}
+
+func (fs *Service) CreateForwardRule(ctx context.Context, rule *model.ForwardRule) error {
+	if err := fs.storage.SaveForwardRule(ctx, rule); err != nil {
+		return err
+	}
+	fs.loadRules(ctx)
+	return nil
+}
+
+func (fs *Service) UpdateForwardRule(ctx context.Context, rule *model.ForwardRule) error {
+	if err := fs.storage.UpdateForwardRule(ctx, rule); err != nil {
+		return err
+	}
+	fs.loadRules(ctx)
+	return nil
+}
+
+func (fs *Service) DeleteForwardRule(ctx context.Context, id string) error {
+	if err := fs.storage.DeleteForwardRule(ctx, id); err != nil {
+		return err
+	}
+	fs.loadRules(ctx)
+	return nil
 }
 
 func (fs *Service) GetForwardStatistics(ctx context.Context) (*ForwardStatistics, error) {
@@ -303,6 +345,10 @@ func (fs *Service) GetForwardStatistics(ctx context.Context) (*ForwardStatistics
 		TotalData:   total,
 		ActiveRules: int64(len(fs.rules)),
 	}, nil
+}
+
+func (fs *Service) GetForwardLogs(ctx context.Context, ruleID, deviceID, status string, limit, offset int) ([]*model.ForwardLog, error) {
+	return fs.storage.GetForwardLogs(ctx, ruleID, deviceID, status, limit, offset)
 }
 
 type ForwardStatistics struct {

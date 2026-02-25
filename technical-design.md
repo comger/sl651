@@ -905,8 +905,9 @@ func (b *ChannelMessageBus) Close() error {
 | /api/v1/tenants | GET | 获取租户列表 | admin | V1.0 |
 | /api/v1/tenants | POST | 创建租户 | admin | V1.0 |
 | /api/v1/tenants/{id}/rules | GET | 获取转发规则 | read | V1.0 |
-| /api/v1/tenants/{id}/rules | POST | 创建转发规则 | write | V1.0 |
-| /api/v1/tenants/{id}/rules/{rule_id} | DELETE | 删除转发规则 | write | V1.0 |
+| /api/v1/tenants/{id}/rules | POST | 创建转发规则 | write | V2.0 |
+| /api/v1/tenants/{id}/rules/{rule_id} | DELETE | 删除转发规则 | write | V2.0 |
+| /api/v1/forwarding/logs | GET | 获取转发日志 | read | V2.0 |
 | /api/v1/monitoring/metrics | GET | 获取监控指标 | read | V1.0 |
 | /api/v1/monitoring/alerts | GET | 获取告警列表 | read | V1.0 |
 
@@ -1176,7 +1177,7 @@ type ForwardRule struct {
     Enabled     bool         `json:"enabled" gorm:"not null"`
     Filter      RuleFilter   `json:"filter" gorm:"type:text"`
     Transform   RuleTransform `json:"transform" gorm:"type:text"`
-    Destination Destination  `json:"destination" gorm:"type:text"`
+    Destinations Destinations `json:"destinations" gorm:"type:text"`
     RetryPolicy RetryPolicy  `json:"retry_policy" gorm:"type:text"`
     CreatedAt   time.Time    `json:"created_at" gorm:"autoCreateTime"`
     UpdatedAt   time.Time    `json:"updated_at" gorm:"autoUpdateTime"`
@@ -1240,6 +1241,9 @@ const (
     DestTypeHttp     DestType = "http"
     DestTypeMqtt     DestType = "mqtt"
     DestTypeDatabase DestType = "database"
+    DestTypeMySQL    DestType = "mysql"
+    DestTypePostgres DestType = "postgres"
+    DestTypeSqlite   DestType = "sqlite"
     DestTypeCustom   DestType = "custom"
 )
 
@@ -1317,6 +1321,24 @@ const (
 )
 ```
 
+#### 5.1.8 转发日志模型
+
+```go
+type ForwardLog struct {
+	ID             string    `json:"id" gorm:"primaryKey"`
+	RuleID         string    `json:"rule_id" gorm:"not null;index"`
+	DeviceID       string    `json:"device_id" gorm:"not null"`
+	DataID         string    `json:"data_id" gorm:"not null"`
+	Status         string    `json:"status" gorm:"not null"`
+	TargetType     string    `json:"target_type" gorm:"not null"`
+	DestinationURL string    `json:"destination_url" gorm:"type:text"`
+	Payload        string    `json:"payload" gorm:"type:text"`
+	ErrorMessage   string    `json:"error_message"`
+	RetryCount     int       `json:"retry_count" gorm:"not null"`
+	CreatedAt      time.Time `json:"created_at" gorm:"not null;index"`
+}
+```
+
 ### 5.2 数据库设计
 
 #### 5.2.1 SQLite表结构
@@ -1379,6 +1401,9 @@ CREATE TABLE forward_logs (
     device_id TEXT NOT NULL,
     data_id TEXT NOT NULL,
     status TEXT NOT NULL,
+    target_type TEXT NOT NULL,
+    destination_url TEXT,
+    payload TEXT,
     error_message TEXT,
     retry_count INTEGER NOT NULL,
     created_at INTEGER NOT NULL

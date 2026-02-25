@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Layout, Table, Checkbox, Card, Typography, Space, Tag, theme, Divider, Empty, ConfigProvider, Statistic, Row, Col, Badge, Button, Modal, Form, InputNumber, Tooltip, Drawer, Timeline, Menu, Progress, Input, Select, message } from 'antd';
-import { DatabaseOutlined, HddOutlined, SyncOutlined, SettingOutlined, DashboardOutlined, HistoryOutlined, AlertOutlined, SafetyCertificateOutlined, BugOutlined, ProfileOutlined, SignalFilled, ControlOutlined, SendOutlined, ReadOutlined } from '@ant-design/icons';
+import { Layout, Table, Checkbox, Card, Typography, Space, Tag, theme, Divider, Empty, ConfigProvider, Statistic, Row, Col, Badge, Button, Modal, Form, InputNumber, Tooltip, Drawer, Timeline, Menu, Progress, Input, Select, message, Tabs, Descriptions, Popconfirm } from 'antd';
+import { DatabaseOutlined, HddOutlined, SyncOutlined, SettingOutlined, DashboardOutlined, HistoryOutlined, AlertOutlined, SafetyCertificateOutlined, BugOutlined, ProfileOutlined, SignalFilled, ControlOutlined, SendOutlined, ReadOutlined, PlusOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons';
 import axios from 'axios';
 import moment from 'moment';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as ChartTooltip, Legend } from 'recharts';
@@ -144,8 +144,15 @@ const App = () => {
   const [controlHistory, setControlHistory] = useState([]);
   const [executingCmd, setExecutingCmd] = useState(false);
   const [controlDeviceID, setControlDeviceID] = useState('');
+  const [forwardingRules, setForwardingRules] = useState([]);
+  const [isRuleModalOpen, setIsRuleModalOpen] = useState(false);
+  const [editingRule, setEditingRule] = useState(null);
+  const [forwardingLogs, setForwardingLogs] = useState([]);
+  const [isLogDetailOpen, setIsLogDetailOpen] = useState(false);
+  const [selectedLog, setSelectedLog] = useState(null);
   const [form] = Form.useForm();
   const [cmdForm] = Form.useForm();
+  const [ruleForm] = Form.useForm();
 
   const {
     token: { colorBgContainer, borderRadiusLG },
@@ -172,6 +179,9 @@ const App = () => {
       }
       if (activeTab === 'control') {
         fetchControlHistory(controlDeviceID);
+      }
+      if (activeTab === 'forwarding') {
+        fetchForwardingRules();
       }
     }, 10000);
     return () => clearInterval(interval);
@@ -358,6 +368,75 @@ const App = () => {
     }
   };
 
+  const fetchForwardingRules = async () => {
+    try {
+      const res = await api.get('/forwarding/rules');
+      if (res.data.code === 0) {
+        setForwardingRules(res.data.data || []);
+      }
+    } catch (error) {
+      console.error('Failed to fetch forwarding rules:', error);
+    }
+  };
+
+  const fetchForwardingLogs = async () => {
+    try {
+      const res = await api.get('/forwarding/logs');
+      if (res.data.code === 0) {
+        setForwardingLogs(res.data.data || []);
+      }
+    } catch (error) {
+      console.error('Failed to fetch forwarding logs:', error);
+    }
+  };
+
+  const handleSaveForwardingRule = async (values) => {
+    try {
+      const ruleData = {
+        ...values,
+        enabled: values.enabled !== false,
+      };
+
+      let res;
+      if (editingRule) {
+        res = await api.put(`/forwarding/rules/${editingRule.id}`, ruleData);
+      } else {
+        res = await api.post('/forwarding/rules', ruleData);
+      }
+
+      if (res.data.code === 0) {
+        message.success('转发规则已保存');
+        setIsRuleModalOpen(false);
+        fetchForwardingRules();
+      }
+    } catch (error) {
+      console.error('Failed to save forwarding rule:', error);
+      message.error('保存失败');
+    }
+  };
+
+  const handleDeleteForwardingRule = async (id) => {
+    try {
+      const res = await api.delete(`/forwarding/rules/${id}`);
+      if (res.data.code === 0) {
+        message.success('规则已删除');
+        fetchForwardingRules();
+      }
+    } catch (error) {
+      console.error('Failed to delete forwarding rule:', error);
+      message.error('删除失败');
+    }
+  };
+
+  const getDSNExample = (driver) => {
+    switch (driver) {
+      case 'mysql': return 'mysql://user:password@localhost:3306/dbname?parseTime=true';
+      case 'postgres': return 'postgres://user:password@localhost:5432/dbname?sslmode=disable';
+      case 'sqlite': return 'data/platform.db';
+      default: return null;
+    }
+  };
+
   const openTrendDrawer = async () => {
     await fetchTrendData();
     setIsTrendDrawerOpen(true);
@@ -497,6 +576,7 @@ const App = () => {
               style={{ minWidth: '300px' }}
               items={[
                 { key: 'monitoring', icon: <DashboardOutlined />, label: '实时监测' },
+                { key: 'forwarding', icon: <SendOutlined />, label: '转发配置' },
                 { key: 'diagnosis', icon: <BugOutlined />, label: '运维审计' },
                 { key: 'quality', icon: <SignalFilled />, label: '质量评估' },
                 { key: 'control', icon: <ControlOutlined />, label: '远程配置' },
@@ -647,6 +727,110 @@ const App = () => {
                   </div>
                 )}
               </>
+            )}
+            {activeTab === 'forwarding' && (
+              <Card bordered={false} style={{ borderRadius: borderRadiusLG }}>
+                <Tabs
+                  defaultActiveKey="rules"
+                  onChange={(key) => {
+                    if (key === 'logs') fetchForwardingLogs();
+                    else fetchForwardingRules();
+                  }}
+                >
+                  <Tabs.TabPane tab="规则管理" key="rules">
+                    <div style={{ padding: '0 0 16px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Title level={4} style={{ margin: 0 }}>转发配置与北向中心</Title>
+                      <Button type="primary" icon={<PlusOutlined />} onClick={() => {
+                        setEditingRule(null);
+                        ruleForm.resetFields();
+                        ruleForm.setFieldsValue({
+                          destinations: [{ dest_type: 'mqtt', url: 'tcp://broker.hivemq.com:1883' }],
+                          enabled: true
+                        });
+                        setIsRuleModalOpen(true);
+                      }}>
+                        新增转发规则
+                      </Button>
+                    </div>
+                    <Table
+                      dataSource={forwardingRules}
+                      rowKey="id"
+                      bordered={false}
+                      columns={[
+                        { title: '规则名称', dataIndex: 'name', key: 'name', render: (n, r) => <Space><Text strong>{n}</Text>{!r.enabled && <Tag>已禁用</Tag>}</Space> },
+                        {
+                          title: '转发目标',
+                          dataIndex: 'destinations',
+                          key: 'destinations',
+                          render: (dests) => (
+                            <Space direction="vertical" size={2}>
+                              {(dests || []).map((d, i) => (
+                                <Tag key={i} color={['mysql', 'postgres', 'sqlite', 'database'].includes(d.dest_type) ? 'blue' : d.dest_type === 'mqtt' ? 'green' : 'orange'}>
+                                  {d.dest_type.toUpperCase()}: {d.url}
+                                </Tag>
+                              ))}
+                            </Space>
+                          )
+                        },
+                        {
+                          title: '状态',
+                          dataIndex: 'enabled',
+                          key: 'enabled',
+                          render: (e) => <Badge status={e ? 'success' : 'default'} text={e ? '已启用' : '已停用'} />
+                        },
+                        {
+                          title: '操作',
+                          key: 'action',
+                          width: 150,
+                          render: (_, record) => (
+                            <Space>
+                              <Button type="text" icon={<EditOutlined />} onClick={() => {
+                                setEditingRule(record);
+                                ruleForm.setFieldsValue(record);
+                                setIsRuleModalOpen(true);
+                              }} />
+                              <Popconfirm
+                                title="确认删除规则?"
+                                description={`规则 "${record.name}" 将被永久移除。`}
+                                onConfirm={() => handleDeleteForwardingRule(record.id)}
+                              >
+                                <Button type="text" danger icon={<DeleteOutlined />} />
+                              </Popconfirm>
+                            </Space>
+                          )
+                        }
+                      ]}
+                    />
+                  </Tabs.TabPane>
+                  <Tabs.TabPane tab="转发日志" key="logs">
+                    <div style={{ padding: '0 0 16px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Title level={4} style={{ margin: 0 }}>转发执行动态</Title>
+                      <Button icon={<SyncOutlined />} onClick={fetchForwardingLogs}>刷新日志</Button>
+                    </div>
+                    <Table
+                      dataSource={forwardingLogs}
+                      rowKey="id"
+                      pagination={{ pageSize: 12 }}
+                      columns={[
+                        { title: '时间', dataIndex: 'created_at', key: 'time', render: (t) => moment(t).format('YYYY-MM-DD HH:mm:ss') },
+                        { title: '状态', dataIndex: 'status', key: 'status', render: (s) => <Tag color={s === 'success' ? 'success' : 'error'}>{s === 'success' ? '成功' : '失败'}</Tag> },
+                        { title: '目标类型', dataIndex: 'target_type', key: 'target_type', render: (t) => <Tag>{t?.toUpperCase()}</Tag> },
+                        { title: '目的地', dataIndex: 'destination_url', key: 'url', ellipsis: true },
+                        {
+                          title: '操作',
+                          key: 'action',
+                          render: (_, record) => (
+                            <Button type="link" size="small" onClick={() => {
+                              setSelectedLog(record);
+                              setIsLogDetailOpen(true);
+                            }}>查看详情</Button>
+                          )
+                        },
+                      ]}
+                    />
+                  </Tabs.TabPane>
+                </Tabs>
+              </Card>
             )}
             {activeTab === 'diagnosis' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -885,10 +1069,167 @@ const App = () => {
                 <Empty description="暂无历史轨迹记录" />
               )}
             </Drawer>
+
+            <Modal
+              title={editingRule ? '编辑转发规则' : '新增转发规则'}
+              open={isRuleModalOpen}
+              onOk={() => ruleForm.submit()}
+              onCancel={() => setIsRuleModalOpen(false)}
+              width={700}
+              okText="确认保存"
+              cancelText="取消"
+            >
+              <Form form={ruleForm} layout="vertical" onFinish={handleSaveForwardingRule}>
+                <Row gutter={16}>
+                  <Col span={16}>
+                    <Form.Item name="name" label="规则名称" rules={[{ required: true }]}>
+                      <Input placeholder="输入转发规则名称, e.g. 数据转发至省中心" />
+                    </Form.Item>
+                  </Col>
+                  <Col span={8}>
+                    <Form.Item name="enabled" label="是否启用" valuePropName="checked">
+                      <Checkbox>启用该规则</Checkbox>
+                    </Form.Item>
+                  </Col>
+                </Row>
+
+                <Divider orientation="left" style={{ margin: '12px 0' }}>转发目标配置</Divider>
+                <Form.List name="destinations">
+                  {(fields, { add, remove }) => (
+                    <>
+                      {fields.map(({ key, name, ...restField }) => (
+                        <Card size="small" key={key} style={{ marginBottom: 12, background: '#fafafa' }}
+                          extra={<DeleteOutlined onClick={() => remove(name)} style={{ color: '#ff4d4f' }} />}>
+                          <Row gutter={12}>
+                            <Col span={6}>
+                              <Form.Item
+                                {...restField}
+                                name={[name, 'dest_type']}
+                                label="目标类型"
+                                rules={[{ required: true }]}
+                              >
+                                <Select>
+                                  <Select.Option value="mqtt">MQTT 代理</Select.Option>
+                                  <Select.Option value="mysql">MySQL 数据库</Select.Option>
+                                  <Select.Option value="postgres">PostgreSQL 数据库</Select.Option>
+                                  <Select.Option value="sqlite">SQLite 数据库</Select.Option>
+                                  <Select.Option value="http">HTTP Webhook</Select.Option>
+                                </Select>
+                              </Form.Item>
+                            </Col>
+                            <Form.Item noStyle shouldUpdate={(prevValues, currentValues) => prevValues.destinations !== currentValues.destinations}>
+                              {({ getFieldValue }) => {
+                                const destType = getFieldValue(['destinations', name, 'dest_type']);
+                                const isDatabase = ['mysql', 'postgres', 'sqlite', 'database'].includes(destType);
+                                if (isDatabase) {
+                                  return (
+                                    <Col span={18}>
+                                      <Form.Item
+                                        {...restField}
+                                        name={[name, 'url']}
+                                        label="连接地址"
+                                        extra={(() => {
+                                          const example = getDSNExample(destType === 'database' ? 'mysql' : destType);
+                                          return example ? (
+                                            <span>{`示例: `}<Text code copyable>{example}</Text></span>
+                                          ) : null;
+                                        })()}
+                                        rules={[{ required: true }]}
+                                      >
+                                        <Input placeholder="输入 DSN 连接字符串" />
+                                      </Form.Item>
+                                    </Col>
+                                  );
+                                }
+                                return (
+                                  <Col span={18}>
+                                    <Form.Item
+                                      {...restField}
+                                      name={[name, 'url']}
+                                      label="连接地址 (URL/Host)"
+                                      rules={[{ required: true }]}
+                                    >
+                                      <Input placeholder="tcp://host:1883 or http://api.example.com" />
+                                    </Form.Item>
+                                  </Col>
+                                );
+                              }}
+                            </Form.Item>
+                          </Row>
+                        </Card>
+                      ))}
+                      <Button type="dashed" onClick={() => add()} block icon={<PlusOutlined />}>
+                        添加转发目的地 (多中心转发)
+                      </Button>
+                    </>
+                  )}
+                </Form.List>
+
+                <Divider orientation="left" style={{ margin: '12px 0' }}>过滤条件 (可选)</Divider>
+                <Row gutter={12}>
+                  <Col span={12}>
+                    <Form.Item name={['filter', 'device_ids']} label="限制设备 ID (逗号分隔)">
+                      <Input placeholder="留空转发所有设备" />
+                    </Form.Item>
+                  </Col>
+                  <Col span={12}>
+                    <Form.Item name={['filter', 'data_types']} label="数据类型过滤">
+                      <Select mode="multiple" placeholder="默认全部">
+                        <Select.Option value="realtime">实时报</Select.Option>
+                        <Select.Option value="alarm">报警报</Select.Option>
+                        <Select.Option value="status">状态报</Select.Option>
+                      </Select>
+                    </Form.Item>
+                  </Col>
+                </Row>
+              </Form>
+            </Modal>
+
+            <Modal
+              title="转发日志详情"
+              open={isLogDetailOpen}
+              onCancel={() => setIsLogDetailOpen(false)}
+              footer={[
+                <Button key="close" onClick={() => setIsLogDetailOpen(false)}>关闭</Button>
+              ]}
+              width={800}
+            >
+              {selectedLog && (
+                <Descriptions bordered column={1} size="small">
+                  <Descriptions.Item label="创建时间">
+                    {moment(selectedLog.created_at).format('YYYY-MM-DD HH:mm:ss')}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="目标中心">
+                    <Tag color="blue">{selectedLog.target_type?.toUpperCase()}</Tag> {selectedLog.destination_url}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="状态">
+                    <Tag color={selectedLog.status === 'success' ? 'success' : 'error'}>
+                      {selectedLog.status === 'success' ? '成功' : '失败'}
+                    </Tag>
+                  </Descriptions.Item>
+                  {selectedLog.error_message && (
+                    <Descriptions.Item label="错误信息">
+                      <Text type="danger">{selectedLog.error_message}</Text>
+                    </Descriptions.Item>
+                  )}
+                  <Descriptions.Item label="转发内容 (Payload)">
+                    <pre style={{ background: '#f5f5f5', padding: '12px', borderRadius: '4px', overflowX: 'auto', maxHeight: '400px', fontSize: '12px' }}>
+                      {(() => {
+                        try {
+                          return JSON.stringify(JSON.parse(selectedLog.payload), null, 2);
+                        } catch (e) {
+                          return selectedLog.payload;
+                        }
+                      })()}
+                    </pre>
+                  </Descriptions.Item>
+                </Descriptions>
+              )}
+            </Modal>
           </Content>
         </Layout>
       </Layout>
-    </ConfigProvider>
+    </ConfigProvider >
   );
 };
 

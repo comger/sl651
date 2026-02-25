@@ -197,16 +197,33 @@ const (
 )
 
 type ForwardRule struct {
-	ID          string        `json:"id" gorm:"primaryKey"`
-	TenantID    string        `json:"tenant_id" gorm:"not null;index"`
-	Name        string        `json:"name" gorm:"not null"`
-	Enabled     bool          `json:"enabled" gorm:"not null"`
-	Filter      RuleFilter    `json:"filter" gorm:"type:text"`
-	Transform   RuleTransform `json:"transform" gorm:"type:text"`
-	Destination Destination   `json:"destination" gorm:"type:text"`
-	RetryPolicy RetryPolicy   `json:"retry_policy" gorm:"type:text"`
-	CreatedAt   time.Time     `json:"created_at" gorm:"autoCreateTime"`
-	UpdatedAt   time.Time     `json:"updated_at" gorm:"autoUpdateTime"`
+	ID           string        `json:"id" gorm:"primaryKey"`
+	TenantID     string        `json:"tenant_id" gorm:"not null;index"`
+	Name         string        `json:"name" gorm:"not null"`
+	Enabled      bool          `json:"enabled" gorm:"not null"`
+	Filter       RuleFilter    `json:"filter" gorm:"type:text"`
+	Transform    RuleTransform `json:"transform" gorm:"type:text"`
+	Destinations Destinations  `json:"destinations" gorm:"type:text"`
+	RetryPolicy  RetryPolicy   `json:"retry_policy" gorm:"type:text"`
+	CreatedAt    time.Time     `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt    time.Time     `json:"updated_at" gorm:"autoUpdateTime"`
+}
+
+type Destinations []Destination
+
+func (d *Destinations) Scan(value interface{}) error {
+	if value == nil {
+		return nil
+	}
+	bytes, ok := value.([]byte)
+	if !ok {
+		return nil
+	}
+	return json.Unmarshal(bytes, d)
+}
+
+func (d Destinations) Value() (driver.Value, error) {
+	return json.Marshal(d)
 }
 
 func (f *RuleFilter) Scan(value interface{}) error {
@@ -327,6 +344,9 @@ const (
 	DestTypeHttp     DestType = "http"
 	DestTypeMqtt     DestType = "mqtt"
 	DestTypeDatabase DestType = "database"
+	DestTypeMySQL    DestType = "mysql"
+	DestTypePostgres DestType = "postgres"
+	DestTypeSqlite   DestType = "sqlite"
 	DestTypeCustom   DestType = "custom"
 )
 
@@ -344,14 +364,17 @@ type RetryPolicy struct {
 }
 
 type ForwardLog struct {
-	ID           string    `json:"id" gorm:"primaryKey"`
-	RuleID       string    `json:"rule_id" gorm:"not null;index"`
-	DeviceID     string    `json:"device_id" gorm:"not null"`
-	DataID       string    `json:"data_id" gorm:"not null"`
-	Status       string    `json:"status" gorm:"not null"`
-	ErrorMessage string    `json:"error_message"`
-	RetryCount   int       `json:"retry_count" gorm:"not null"`
-	CreatedAt    time.Time `json:"created_at" gorm:"not null;index"`
+	ID             string    `json:"id" gorm:"primaryKey"`
+	RuleID         string    `json:"rule_id" gorm:"not null;index"`
+	DeviceID       string    `json:"device_id" gorm:"not null"`
+	DataID         string    `json:"data_id" gorm:"not null"`
+	Status         string    `json:"status" gorm:"not null"`
+	TargetType     string    `json:"target_type" gorm:"not null"`
+	DestinationURL string    `json:"destination_url" gorm:"type:text"`
+	Payload        string    `json:"payload" gorm:"type:text"`
+	ErrorMessage   string    `json:"error_message"`
+	RetryCount     int       `json:"retry_count" gorm:"not null"`
+	CreatedAt      time.Time `json:"created_at" gorm:"not null;index"`
 }
 
 type StatusHistory struct {

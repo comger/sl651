@@ -33,8 +33,6 @@ func NewManager(storage *storage.Storage, protocol *sl651.Protocol) *Manager {
 func (dm *Manager) Start(ctx context.Context) {
 	log.Println("Device manager started")
 
-	go dm.processData(ctx)
-
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 

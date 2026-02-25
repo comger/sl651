@@ -1,0 +1,22 @@
+server:
+  host: "127.0.0.1"
+  port: 8085
+  mode: "debug"
+
+database:
+  path: "./data/platform.db"
+
+access:
+  max_connections: 10000
+
+forward:
+  max_queue_size: 10000
+  worker_count: 4
+
+logging:
+  level: "info"
+  file: "./logs/platform.log"
+
+heartbeat:
+  check_interval: 60
+  default_timeout: 300
